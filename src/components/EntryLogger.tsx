@@ -18,8 +18,28 @@ export default function EntryLogger() {
   const [currentCount, setCurrentCount] = useState({ male: 0, female: 0 });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [isConnected, setIsConnected] = useState(true);
 
   useEffect(() => {
+    const checkConnection = async () => {
+      try {
+        const { error } = await supabase.from('entries').select('count').limit(1);
+        setIsConnected(!error);
+        if (error) {
+          setErrorMessage('Unable to connect to the database. Please try again later.');
+        }
+      } catch (err) {
+        setIsConnected(false);
+        setErrorMessage('Unable to connect to the database. Please try again later.');
+      }
+    };
+
+    checkConnection();
+  }, []);
+
+  useEffect(() => {
+    if (!isConnected) return;
+
     const fetchCurrentCounts = async () => {
       try {
         // Get all entries since we don't have reset markers yet
@@ -76,7 +96,7 @@ export default function EntryLogger() {
     return () => {
       subscription.unsubscribe();
     };
-  }, []);
+  }, [isConnected]);
 
   const handleEntry = async (gender: Gender, type: EntryType) => {
     try {
