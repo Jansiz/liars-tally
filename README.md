@@ -1,36 +1,129 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Venue Tally System
 
-## Getting Started
+A real-time venue occupancy tracking system built with Next.js, Supabase, and TypeScript.
 
-First, run the development server:
+## Features
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+- 👥 Track male and female entries/exits
+- 📊 Real-time visitor counter
+- 🔥 Heatmap of peak hours
+- 📱 Mobile-friendly UI
+- 🔒 Admin authentication
+- 📈 Real-time analytics dashboard
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Tech Stack
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- Frontend: Next.js (React + TypeScript)
+- Styling: Tailwind CSS
+- Backend: Supabase (PostgreSQL + Auth)
+- Charts: Recharts
+- Authentication: Supabase Auth
+- Hosting: Vercel
+- Real-time updates: Supabase Realtime
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Prerequisites
 
-## Learn More
+- Node.js 18+ and npm
+- Supabase account and project
 
-To learn more about Next.js, take a look at the following resources:
+## Setup
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/venue-tally.git
+   cd venue-tally
+   ```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
 
-## Deploy on Vercel
+3. Create a Supabase project and set up the following tables:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+   ```sql
+   -- Create entries table
+   create table entries (
+     id uuid default uuid_generate_v4() primary key,
+     gender text check (gender in ('male', 'female')),
+     type text check (type in ('entry', 'exit')),
+     timestamp timestamptz default now()
+   );
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+   -- Create admins table
+   create table admins (
+     id uuid references auth.users primary key,
+     email text unique not null,
+     role text check (role = 'admin')
+   );
+
+   -- Enable Row Level Security (RLS)
+   alter table entries enable row level security;
+   alter table admins enable row level security;
+
+   -- Create policies
+   create policy "Anyone can insert entries" on entries
+     for insert to anon
+     with check (true);
+
+   create policy "Anyone can view entries" on entries
+     for select to anon
+     using (true);
+
+   create policy "Only admins can view admin data" on admins
+     for select to authenticated
+     using (auth.uid() = id);
+   ```
+
+4. Create a `.env.local` file with your Supabase credentials:
+   ```
+   NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+   ```
+
+5. Run the development server:
+   ```bash
+   npm run dev
+   ```
+
+6. Create an admin user:
+   - Sign up a user through Supabase Authentication
+   - Insert the user into the admins table with the admin role:
+     ```sql
+     insert into admins (id, email, role)
+     values ('user_id_from_auth', 'admin@example.com', 'admin');
+     ```
+
+## Usage
+
+1. **Entry/Exit Logging:**
+   - Open the main page
+   - Use the + and - buttons to log entries and exits
+   - Counts update in real-time
+
+2. **Admin Dashboard:**
+   - Navigate to `/admin`
+   - Log in with admin credentials
+   - View real-time analytics and historical data
+
+3. **Fake Total:**
+   - Click the "Show Fake Count" button to display 570
+   - Click again to show the real count
+
+## Development
+
+- `npm run dev` - Start development server
+- `npm run build` - Build for production
+- `npm run start` - Start production server
+- `npm run lint` - Run ESLint
+
+## Deployment
+
+1. Push your code to GitHub
+2. Connect your repository to Vercel
+3. Add environment variables in Vercel
+4. Deploy!
+
+## License
+
+MIT
