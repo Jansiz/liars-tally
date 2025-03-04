@@ -4,18 +4,22 @@ import { useState, useEffect } from 'react';
 import { supabase, Gender, EntryType } from '@/lib/supabase';
 import { PlusIcon, MinusIcon } from '@heroicons/react/24/solid';
 import { cn } from '@/lib/utils';
-import { RealtimePostgresChangesPayload, RealtimeChannel } from '@supabase/supabase-js';
+import { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 
-interface EntryRecord {
+interface CountState {
+  male: number;
+  female: number;
+}
+
+interface Entry {
   gender: Gender;
   type: EntryType;
-  timestamp: string;
 }
 
 export default function EntryLogger() {
   const [isLoading, setIsLoading] = useState(false);
   const [showFakeCount, setShowFakeCount] = useState(false);
-  const [currentCount, setCurrentCount] = useState({ male: 0, female: 0 });
+  const [currentCount, setCurrentCount] = useState<CountState>({ male: 0, female: 0 });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [isConnected, setIsConnected] = useState(true);
@@ -53,14 +57,13 @@ export default function EntryLogger() {
           return;
         }
 
-        const counts = entries.reduce(
-          (acc, entry: { gender: Gender; type: EntryType }) => {
-            const change = entry.type === 'entry' ? 1 : -1;
-            acc[entry.gender] += change;
-            return acc;
-          },
-          { male: 0, female: 0 }
-        );
+        if (!entries) return;
+
+        const counts = entries.reduce((acc: CountState, entry: Entry) => {
+          const change = entry.type === 'entry' ? 1 : -1;
+          acc[entry.gender] += change;
+          return acc;
+        }, { male: 0, female: 0 });
 
         setCurrentCount(counts);
       } catch (error: any) {
@@ -79,14 +82,16 @@ export default function EntryLogger() {
           schema: 'public',
           table: 'entries',
         },
-        (payload: RealtimePostgresChangesPayload<EntryRecord>) => {
+        (payload: RealtimePostgresChangesPayload<Entry>) => {
           if (!payload.new) return;
-          const { gender, type } = payload.new as EntryRecord;
           
-          if (gender === 'male' || gender === 'female') {
+          const entry = payload.new as Entry;
+          if (!entry?.gender || !entry?.type) return;
+          
+          if (entry.gender === 'male' || entry.gender === 'female') {
             setCurrentCount(prev => ({
               ...prev,
-              [gender]: Math.max(0, prev[gender] + (type === 'entry' ? 1 : -1))
+              [entry.gender]: Math.max(0, prev[entry.gender] + (entry.type === 'entry' ? 1 : -1))
             }));
           }
         }

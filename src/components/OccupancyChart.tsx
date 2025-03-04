@@ -12,63 +12,65 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { supabase } from '@/lib/supabase';
+import { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 
-interface OccupancySnapshot {
+interface Snapshot {
   timestamp: string;
-  male_count: number;
-  female_count: number;
-  total_count: number;
+  male: number;
+  female: number;
 }
 
 export default function OccupancyChart() {
-  const [snapshots, setSnapshots] = useState<OccupancySnapshot[]>([]);
+  const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchSnapshots = async () => {
-      // Get snapshots for the last 24 hours
-      const twentyFourHoursAgo = new Date();
-      twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+      try {
+        const { data, error } = await supabase
+          .from('snapshots')
+          .select('*')
+          .order('timestamp', { ascending: false })
+          .limit(24);
 
-      const { data, error } = await supabase
-        .from('occupancy_snapshots')
-        .select('*')
-        .gte('timestamp', twentyFourHoursAgo.toISOString())
-        .order('timestamp', { ascending: true });
+        if (error) throw error;
 
-      if (error) {
-        console.error('Error fetching snapshots:', error);
-        setError(error.message);
-        return;
+        if (data) {
+          setSnapshots(data.map((snapshot: Snapshot) => ({
+            ...snapshot,
+            timestamp: new Date(snapshot.timestamp).toLocaleTimeString(),
+          })));
+        }
+      } catch (err) {
+        console.error('Error fetching snapshots:', err);
+        setError('Failed to load occupancy data');
+      } finally {
+        setIsLoading(false);
       }
-
-      setSnapshots(data.map(snapshot => ({
-        ...snapshot,
-        timestamp: new Date(snapshot.timestamp).toLocaleTimeString(),
-      })));
     };
 
-    // Fetch initial data
     fetchSnapshots();
 
-    // Set up real-time subscription for new snapshots
-    const subscription = supabase
-      .channel('occupancy-snapshots')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'occupancy_snapshots' },
-        (payload: { new: OccupancySnapshot }) => {
-          console.log('New snapshot:', payload);
-          setSnapshots(prev => [...prev.slice(-95), {
-            ...payload.new,
-            timestamp: new Date(payload.new.timestamp).toLocaleTimeString(),
-          }]);
-        }
-      )
+    const channel = supabase
+      .channel('snapshots')
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'snapshots' 
+      }, (payload: RealtimePostgresChangesPayload<Snapshot>) => {
+        if (!payload.new) return;
+        
+        const snapshot = payload.new as Snapshot;
+        setSnapshots(prev => [{
+          ...snapshot,
+          timestamp: new Date(snapshot.timestamp).toLocaleTimeString(),
+        }, ...prev].slice(0, 24));
+      })
       .subscribe();
 
     return () => {
-      subscription.unsubscribe();
+      channel.unsubscribe();
     };
   }, []);
 
@@ -91,9 +93,8 @@ export default function OccupancyChart() {
           <YAxis />
           <Tooltip />
           <Legend />
-          <Bar dataKey="male_count" name="Male" fill="#3B82F6" />
-          <Bar dataKey="female_count" name="Female" fill="#EC4899" />
-          <Bar dataKey="total_count" name="Total" fill="#10B981" />
+          <Bar dataKey="male" name="Male" fill="#3B82F6" />
+          <Bar dataKey="female" name="Female" fill="#EC4899" />
         </BarChart>
       </ResponsiveContainer>
     </div>
