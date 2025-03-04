@@ -244,7 +244,7 @@ export default function EntryLogger() {
             />
           </div>
 
-          <div className="mt-4 mb-8">
+          <div className="mt-4 mb-4">
             <button
               onClick={() => setShowResetConfirm(true)}
               className="w-full p-4 rounded-xl bg-red-500/20 text-red-300 hover:bg-red-500/30 transition-all duration-300 font-semibold backdrop-blur-sm border border-red-500/20"
