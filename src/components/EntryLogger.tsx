@@ -172,7 +172,7 @@ export default function EntryLogger() {
   const totalCount = showFakeCount ? 570 : currentCount.male + currentCount.female;
 
   return (
-    <div className="fixed inset-0 min-h-screen bg-gradient-to-b from-gray-900 to-gray-800 text-white flex items-center justify-center">
+    <div className="fixed inset-0 min-h-screen bg-gradient-to-b from-gray-900 to-gray-800 text-white flex items-center justify-center pb-safe">
       {/* Reset Confirmation Modal */}
       {showResetConfirm && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
@@ -208,7 +208,7 @@ export default function EntryLogger() {
         ⚙️
       </a>
 
-      <div className="w-full max-w-4xl px-4">
+      <div className="w-full max-w-4xl px-4 py-8">
         <div className="text-center relative mb-6">
           <h1 className="text-4xl font-bold mb-2 text-white/90">
             Current
@@ -252,7 +252,7 @@ export default function EntryLogger() {
           />
         </div>
 
-        <div className="mt-4">
+        <div className="mt-4 mb-8">
           <button
             onClick={() => setShowResetConfirm(true)}
             className="w-full p-4 rounded-xl bg-red-500/20 text-red-300 hover:bg-red-500/30 transition-all duration-300 font-semibold backdrop-blur-sm border border-red-500/20"
