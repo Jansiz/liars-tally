@@ -202,14 +202,14 @@ export default function EntryLogger() {
       {/* Admin button in bottom right */}
       <a
         href="/admin"
-        className="fixed bottom-6 right-6 p-3 text-sm text-white/25 hover:text-white/50 transition-all duration-300 rounded-full hover:bg-white/5"
+        className="fixed bottom-4 right-4 p-3 text-sm text-white/25 hover:text-white/50 transition-all duration-300 rounded-full hover:bg-white/5"
         aria-label="Admin Access"
       >
         ⚙️
       </a>
 
-      <div className="w-full max-w-4xl px-6 py-12">
-        <div className="text-center relative mb-8">
+      <div className="w-full max-w-4xl px-4 py-8">
+        <div className="text-center relative mb-6">
           <h1 className="text-4xl font-bold mb-2 text-white/90">
             Current
           </h1>
@@ -228,7 +228,7 @@ export default function EntryLogger() {
           />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
           {/* Male Counter */}
           <CounterCard
             title="M"
@@ -252,7 +252,7 @@ export default function EntryLogger() {
           />
         </div>
 
-        <div className="mt-8 mb-12">
+        <div className="mt-4 mb-24">
           <button
             onClick={() => setShowResetConfirm(true)}
             className="w-full p-4 rounded-xl bg-red-500/20 text-red-300 hover:bg-red-500/30 transition-all duration-300 font-semibold backdrop-blur-sm border border-red-500/20"
