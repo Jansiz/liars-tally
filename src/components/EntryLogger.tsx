@@ -82,21 +82,36 @@ export default function EntryLogger() {
           schema: 'public',
           table: 'entries',
         },
-        (payload: RealtimePostgresChangesPayload<Entry>) => {
-          if (!payload.new) return;
-          
-          const entry = payload.new as Entry;
-          if (!entry?.gender || !entry?.type) return;
-          
-          if (entry.gender === 'male' || entry.gender === 'female') {
-            setCurrentCount(prev => ({
-              ...prev,
-              [entry.gender]: Math.max(0, prev[entry.gender] + (entry.type === 'entry' ? 1 : -1))
-            }));
+        async (payload: RealtimePostgresChangesPayload<Entry>) => {
+          // Refetch current counts to ensure accuracy
+          const { data: entries, error } = await supabase
+            .from('entries')
+            .select('gender, type');
+
+          if (error) {
+            console.error('Error fetching entries after change:', error);
+            return;
           }
+
+          if (!entries) return;
+
+          const counts = entries.reduce((acc: CountState, entry: Entry) => {
+            const change = entry.type === 'entry' ? 1 : -1;
+            acc[entry.gender] += change;
+            return acc;
+          }, { male: 0, female: 0 });
+
+          setCurrentCount(counts);
         }
       )
-      .subscribe();
+      .subscribe((status: 'SUBSCRIBED' | 'CHANNEL_ERROR') => {
+        if (status === 'SUBSCRIBED') {
+          console.log('Successfully subscribed to entries changes');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('Failed to subscribe to entries changes');
+          setErrorMessage('Failed to connect to real-time updates. Please refresh the page.');
+        }
+      });
 
     return () => {
       subscription.unsubscribe();
