@@ -172,7 +172,7 @@ export default function EntryLogger() {
   const totalCount = showFakeCount ? 570 : currentCount.male + currentCount.female;
 
   return (
-    <div className="fixed inset-0 min-h-screen bg-gradient-to-b from-gray-900 to-gray-800 text-white flex items-center justify-center pb-safe">
+    <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-800 text-white flex flex-col">
       {/* Reset Confirmation Modal */}
       {showResetConfirm && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
@@ -199,67 +199,71 @@ export default function EntryLogger() {
         </div>
       )}
 
-      {/* Admin button in bottom right */}
-      <a
-        href="/admin"
-        className="fixed bottom-4 right-4 p-3 text-sm text-white/25 hover:text-white/50 transition-all duration-300 rounded-full hover:bg-white/5"
-        aria-label="Admin Access"
-      >
-        ⚙️
-      </a>
-
-      <div className="w-full max-w-4xl px-4 py-8">
-        <div className="text-center relative mb-6">
-          <h1 className="text-4xl font-bold mb-2 text-white/90">
-            Current
-          </h1>
-          <div className="text-7xl font-bold mb-2 transition-all duration-300">
-            {totalCount}
-          </div>
-          {errorMessage && (
-            <div className="mt-2 p-3 bg-red-500/20 border border-red-500/50 text-red-200 rounded-lg backdrop-blur-sm">
-              {errorMessage}
+      <div className="flex-1 flex flex-col items-center justify-center py-12">
+        <div className="w-full max-w-4xl px-4">
+          <div className="text-center relative mb-6">
+            <h1 className="text-4xl font-bold mb-2 text-white/90">
+              Current
+            </h1>
+            <div className="text-7xl font-bold mb-2 transition-all duration-300">
+              {totalCount}
             </div>
-          )}
-          <button
-            onClick={() => setShowFakeCount(!showFakeCount)}
-            className="absolute top-0 right-0 w-4 h-4 rounded-full bg-white/5 hover:bg-white/10 transition-all duration-200"
-            aria-label="Toggle count mode"
-          />
-        </div>
+            {errorMessage && (
+              <div className="mt-2 p-3 bg-red-500/20 border border-red-500/50 text-red-200 rounded-lg backdrop-blur-sm">
+                {errorMessage}
+              </div>
+            )}
+            <button
+              onClick={() => setShowFakeCount(!showFakeCount)}
+              className="absolute top-0 right-0 w-4 h-4 rounded-full bg-white/5 hover:bg-white/10 transition-all duration-200"
+              aria-label="Toggle count mode"
+            />
+          </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-          {/* Male Counter */}
-          <CounterCard
-            title="M"
-            count={currentCount.male}
-            color="blue"
-            onIncrement={() => handleEntry('male', 'entry')}
-            onDecrement={() => handleEntry('male', 'exit')}
-            isLoading={isLoading}
-            isDecrementDisabled={currentCount.male <= 0}
-          />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+            {/* Male Counter */}
+            <CounterCard
+              title="M"
+              count={currentCount.male}
+              color="blue"
+              onIncrement={() => handleEntry('male', 'entry')}
+              onDecrement={() => handleEntry('male', 'exit')}
+              isLoading={isLoading}
+              isDecrementDisabled={currentCount.male <= 0}
+            />
 
-          {/* Female Counter */}
-          <CounterCard
-            title="F"
-            count={currentCount.female}
-            color="pink"
-            onIncrement={() => handleEntry('female', 'entry')}
-            onDecrement={() => handleEntry('female', 'exit')}
-            isLoading={isLoading}
-            isDecrementDisabled={currentCount.female <= 0}
-          />
-        </div>
+            {/* Female Counter */}
+            <CounterCard
+              title="F"
+              count={currentCount.female}
+              color="pink"
+              onIncrement={() => handleEntry('female', 'entry')}
+              onDecrement={() => handleEntry('female', 'exit')}
+              isLoading={isLoading}
+              isDecrementDisabled={currentCount.female <= 0}
+            />
+          </div>
 
-        <div className="mt-4 mb-24">
-          <button
-            onClick={() => setShowResetConfirm(true)}
-            className="w-full p-4 rounded-xl bg-red-500/20 text-red-300 hover:bg-red-500/30 transition-all duration-300 font-semibold backdrop-blur-sm border border-red-500/20"
-          >
-            Reset Counter
-          </button>
+          <div className="mt-4 mb-8">
+            <button
+              onClick={() => setShowResetConfirm(true)}
+              className="w-full p-4 rounded-xl bg-red-500/20 text-red-300 hover:bg-red-500/30 transition-all duration-300 font-semibold backdrop-blur-sm border border-red-500/20"
+            >
+              Reset Counter
+            </button>
+          </div>
         </div>
+      </div>
+
+      {/* Admin button at the bottom */}
+      <div className="w-full flex justify-end p-4">
+        <a
+          href="/admin"
+          className="p-3 text-sm text-white/25 hover:text-white/50 transition-all duration-300 rounded-full hover:bg-white/5"
+          aria-label="Admin Access"
+        >
+          ⚙️
+        </a>
       </div>
     </div>
   );
