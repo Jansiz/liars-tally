@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Image from 'next/image';
 import {
   BarChart,
   Bar,
@@ -28,72 +29,30 @@ interface DailyTotal {
 }
 
 export default function AdminDashboard() {
+  // Get current date in Toronto timezone
+  const getTodayInToronto = () => {
+    // Create a date object for the current time in UTC
+    const now = new Date();
+    
+    // Convert to Toronto time
+    const torontoTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Toronto' }));
+    
+    // If it's between midnight and 3 AM Toronto time, show the previous day
+    if (torontoTime.getHours() < 3) {
+      torontoTime.setDate(torontoTime.getDate() - 1);
+    }
+    
+    // Format as YYYY-MM-DD
+    return torontoTime.getFullYear() + '-' + 
+           String(torontoTime.getMonth() + 1).padStart(2, '0') + '-' + 
+           String(torontoTime.getDate()).padStart(2, '0');
+  };
+
+  // Initialize with Toronto date
+  const [selectedDate, setSelectedDate] = useState(getTodayInToronto());
   const [intervalStats, setIntervalStats] = useState<IntervalStats[]>([]);
-  const [monthlyStats, setMonthlyStats] = useState<DailyTotal[]>([]);
-  const [selectedDate, setSelectedDate] = useState(
-    new Date().toISOString().split('T')[0]
-  );
-  const [selectedMonth, setSelectedMonth] = useState(
-    new Date().toISOString().slice(0, 7)
-  );
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Fetch monthly data for calendar
-  useEffect(() => {
-    const fetchMonthlyStats = async () => {
-      try {
-        const [year, month] = selectedMonth.split('-');
-        const startOfMonth = new Date(parseInt(year), parseInt(month) - 1, 1);
-        // Get last day of month by going to first day of next month and subtracting one day
-        const endOfMonth = new Date(parseInt(year), parseInt(month), 0);
-        
-        const { data, error } = await supabase
-          .from('entries')
-          .select('*')
-          .gte('timestamp', startOfMonth.toISOString())
-          .lt('timestamp', endOfMonth.toISOString());
-
-        if (error) {
-          console.error('Error fetching monthly stats:', error);
-          return;
-        }
-
-        const dailyTotals: { [key: string]: DailyTotal } = {};
-        
-        // Initialize all days of the month using the correct last day
-        const daysInMonth = endOfMonth.getDate();
-        for (let d = 1; d <= daysInMonth; d++) {
-          const date = new Date(parseInt(year), parseInt(month) - 1, d);
-          const dateStr = date.toISOString().split('T')[0];
-          dailyTotals[dateStr] = {
-            date: dateStr,
-            total: 0,
-            male: 0,
-            female: 0
-          };
-        }
-
-        // Process entries
-        data?.forEach((entry: Entry) => {
-          const entryDate = new Date(entry.timestamp);
-          const dateStr = entryDate.toISOString().split('T')[0];
-          
-          if (dailyTotals[dateStr]) {
-            const count = entry.type === 'entry' ? 1 : -1;
-            dailyTotals[dateStr][entry.gender] += count;
-            dailyTotals[dateStr].total += count;
-          }
-        });
-
-        setMonthlyStats(Object.values(dailyTotals));
-      } catch (err) {
-        console.error('Error processing monthly stats:', err);
-      }
-    };
-
-    fetchMonthlyStats();
-  }, [selectedMonth]);
 
   useEffect(() => {
     const fetchIntervalStats = async () => {
@@ -101,19 +60,24 @@ export default function AdminDashboard() {
         setIsLoading(true);
         setError(null);
 
-        // Create date objects for 4 PM on selected date to 3 AM next day
-        const startTime = new Date(selectedDate);
-        startTime.setHours(16, 0, 0, 0); // 4 PM on selected date
-        
-        const endTime = new Date(selectedDate);
-        endTime.setDate(endTime.getDate() + 1); // Next day
-        endTime.setHours(3, 0, 0, 0); // 3 AM
+        // Create date objects for 4 PM on selected date to 3 AM next day in Toronto time
+        const startDate = new Date(`${selectedDate}T16:00:00-04:00`); // Toronto timezone offset
+        const endDate = new Date(`${selectedDate}T03:00:00-04:00`);
+        endDate.setDate(endDate.getDate() + 1);
+
+        console.log('Fetching interval stats for:', {
+          date: selectedDate,
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+          startTimeLocal: startDate.toLocaleString('en-US', { timeZone: 'America/Toronto' }),
+          endTimeLocal: endDate.toLocaleString('en-US', { timeZone: 'America/Toronto' })
+        });
 
         const { data, error } = await supabase
           .from('entries')
           .select('*')
-          .gte('timestamp', startTime.toISOString())
-          .lt('timestamp', endTime.toISOString())
+          .gte('timestamp', startDate.toISOString())
+          .lt('timestamp', endDate.toISOString())
           .order('timestamp', { ascending: true });
 
         if (error) {
@@ -121,6 +85,8 @@ export default function AdminDashboard() {
           setError(`Error fetching data: ${error.message}`);
           return;
         }
+
+        console.log('Fetched interval entries:', data);
 
         if (!data || data.length === 0) {
           setIntervalStats([]);
@@ -163,13 +129,14 @@ export default function AdminDashboard() {
         // Process entries
         data.forEach((entry: Entry) => {
           const entryDate = new Date(entry.timestamp);
-          const hour = entryDate.getHours();
-          const minute = Math.floor(entryDate.getMinutes() / 15) * 15;
+          const torontoDate = new Date(entryDate.toLocaleString('en-US', { timeZone: 'America/Toronto' }));
+          const hour = torontoDate.getHours();
+          const minute = Math.floor(torontoDate.getMinutes() / 15) * 15;
           const intervalStr = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
           
           const count = entry.type === 'entry' ? 1 : -1;
 
-          if (intervals[intervalStr] && (entry.gender === 'male' || entry.gender === 'female')) {
+          if (intervals[intervalStr]) {
             intervals[intervalStr][entry.gender] += count;
             intervals[intervalStr].total += count;
           }
@@ -204,12 +171,9 @@ export default function AdminDashboard() {
     fetchIntervalStats();
 
     // Set up real-time subscription for the selected timeframe
-    const startTime = new Date(selectedDate);
-    startTime.setHours(16, 0, 0, 0);
-    
-    const endTime = new Date(selectedDate);
-    endTime.setDate(endTime.getDate() + 1);
-    endTime.setHours(3, 0, 0, 0);
+    const startDate = new Date(`${selectedDate}T16:00:00-04:00`); // Toronto timezone offset
+    const endDate = new Date(`${selectedDate}T03:00:00-04:00`);
+    endDate.setDate(endDate.getDate() + 1);
 
     const subscription = supabase
       .channel('entries')
@@ -219,7 +183,7 @@ export default function AdminDashboard() {
           event: '*', 
           schema: 'public', 
           table: 'entries',
-          filter: `timestamp.gte.${startTime.toISOString()}.and.timestamp.lt.${endTime.toISOString()}`
+          filter: `timestamp.gte.${startDate.toISOString()}.and.timestamp.lt.${endDate.toISOString()}`
         },
         fetchIntervalStats
       )
@@ -247,15 +211,23 @@ export default function AdminDashboard() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6">
-      {/* Header Section */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center">
-        <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-pink-400 text-center sm:text-left">
-          Analytics Dashboard
-        </h1>
+      {/* Header Section with Logo */}
+      <div className="flex flex-col items-center gap-4 sm:flex-row sm:justify-between sm:items-center">
+        <div className="flex items-center">
+          <Image
+            src="/logo-liars-transparent.png"
+            alt="Liar's Tally Logo"
+            width={80}
+            height={80}
+            className="object-contain"
+            priority
+          />
+        </div>
         <div className="flex flex-col items-center sm:items-end gap-2">
           <input
             type="date"
             value={selectedDate}
+            max={getTodayInToronto()}
             onChange={(e) => setSelectedDate(e.target.value)}
             className="w-full max-w-[250px] sm:w-auto px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
           />
@@ -292,72 +264,6 @@ export default function AdminDashboard() {
               <p className="text-xl sm:text-2xl md:text-3xl font-bold text-pink-400">
                 {intervalStats.reduce((acc, curr) => acc + curr.female, 0)}
               </p>
-            </div>
-          </div>
-
-          {/* Monthly Calendar View */}
-          <div className="backdrop-blur-sm bg-white/5 p-3 sm:p-4 rounded-xl border border-white/10">
-            <div className="flex flex-col sm:flex-row justify-between items-center gap-2 mb-4">
-              <h2 className="text-lg sm:text-xl font-semibold text-gray-200">Monthly Overview</h2>
-              <input
-                type="month"
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(e.target.value)}
-                className="w-full max-w-[250px] sm:w-auto px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-              />
-            </div>
-            
-            <div className="grid grid-cols-7 gap-1 sm:gap-2">
-              {[
-                { id: 'sun', label: 'S' },
-                { id: 'mon', label: 'M' },
-                { id: 'tue', label: 'T' },
-                { id: 'wed', label: 'W' },
-                { id: 'thu', label: 'T' },
-                { id: 'fri', label: 'F' },
-                { id: 'sat', label: 'S' }
-              ].map(day => (
-                <div key={day.id} className="text-center text-xs text-gray-400 py-1">
-                  {day.label}
-                </div>
-              ))}
-              
-              {monthlyStats.map((day, index) => {
-                const date = new Date(day.date);
-                const firstDayOffset = new Date(day.date.slice(0, 7) + '-01').getDay();
-                
-                if (index === 0) {
-                  const emptyCells = Array(firstDayOffset).fill(null);
-                  return [
-                    ...emptyCells.map((_, i) => (
-                      <div key={`empty-${i}`} className="aspect-square rounded-lg bg-white/5" />
-                    )),
-                    <div
-                      key={day.date}
-                      className={`aspect-square rounded-lg ${getHeatmapColor(day.total)} p-1 cursor-pointer hover:ring-2 hover:ring-indigo-400 transition-all duration-200`}
-                      onClick={() => setSelectedDate(day.date)}
-                    >
-                      <div className="text-[10px] text-gray-400">{date.getDate()}</div>
-                      <div className={`text-xs font-bold ${getTextColor(day.total)}`}>
-                        {day.total}
-                      </div>
-                    </div>
-                  ];
-                }
-                
-                return (
-                  <div
-                    key={day.date}
-                    className={`aspect-square rounded-lg ${getHeatmapColor(day.total)} p-1 cursor-pointer hover:ring-2 hover:ring-indigo-400 transition-all duration-200`}
-                    onClick={() => setSelectedDate(day.date)}
-                  >
-                    <div className="text-[10px] text-gray-400">{date.getDate()}</div>
-                    <div className={`text-xs font-bold ${getTextColor(day.total)}`}>
-                      {day.total}
-                    </div>
-                  </div>
-                );
-              })}
             </div>
           </div>
 
