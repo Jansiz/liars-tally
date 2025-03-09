@@ -60,9 +60,6 @@ export default function AdminDashboard() {
         setIsLoading(true);
         setError(null);
 
-        // Add a small delay to prevent rapid consecutive updates
-        await new Promise(resolve => setTimeout(resolve, 100));
-
         // Create date objects for 4 PM on selected date to 3 AM next day in Toronto time
         const startDate = new Date(`${selectedDate}T16:00:00-04:00`); // Toronto timezone offset
         const endDate = new Date(`${selectedDate}T03:00:00-04:00`);
@@ -76,14 +73,12 @@ export default function AdminDashboard() {
           endTimeLocal: endDate.toLocaleString('en-US', { timeZone: 'America/Toronto' })
         });
 
-        // Use a single query to get the latest state
         const { data, error } = await supabase
           .from('entries')
           .select('*')
           .gte('timestamp', startDate.toISOString())
           .lt('timestamp', endDate.toISOString())
-          .order('timestamp', { ascending: true })
-          .limit(1000); // Add a reasonable limit to prevent overwhelming the client
+          .order('timestamp', { ascending: true });
 
         if (error) {
           console.error('Error fetching stats:', error);
@@ -91,7 +86,7 @@ export default function AdminDashboard() {
           return;
         }
 
-        console.log('Fetched interval entries count:', data?.length);
+        console.log('Fetched interval entries:', data);
 
         if (!data || data.length === 0) {
           setIntervalStats([]);
@@ -173,14 +168,6 @@ export default function AdminDashboard() {
       }
     };
 
-    // Debounce the fetchIntervalStats function for the subscription
-    let timeoutId: NodeJS.Timeout;
-    const debouncedFetch = () => {
-      clearTimeout(timeoutId);
-      timeoutId = setTimeout(fetchIntervalStats, 250);
-    };
-
-    // Initial fetch
     fetchIntervalStats();
 
     // Set up real-time subscription for the selected timeframe
@@ -198,12 +185,11 @@ export default function AdminDashboard() {
           table: 'entries',
           filter: `timestamp.gte.${startDate.toISOString()}.and.timestamp.lt.${endDate.toISOString()}`
         },
-        debouncedFetch // Use the debounced version for real-time updates
+        fetchIntervalStats
       )
       .subscribe();
 
     return () => {
-      clearTimeout(timeoutId); // Clean up the timeout
       subscription.unsubscribe();
     };
   }, [selectedDate]);
