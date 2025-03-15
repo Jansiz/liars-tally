@@ -11,14 +11,29 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
+  LineChart,
+  Line,
 } from 'recharts';
 import { supabase, Entry } from '@/lib/supabase';
 
 interface IntervalStats {
   interval: string;
-  male: number;
-  female: number;
-  total: number;
+  totalEntries: number;
+  totalExits: number;
+  maleEntries: number;
+  maleExits: number;
+  femaleEntries: number;
+  femaleExits: number;
+  runningTotal: number;
+}
+
+interface PeakStats {
+  totalPeakEntries: { count: number; time: string };
+  totalPeakExits: { count: number; time: string };
+  malePeakEntries: { count: number; time: string };
+  malePeakExits: { count: number; time: string };
+  femalePeakEntries: { count: number; time: string };
+  femalePeakExits: { count: number; time: string };
 }
 
 interface DailyTotal {
@@ -51,6 +66,14 @@ export default function AdminDashboard() {
   // Initialize with Toronto date
   const [selectedDate, setSelectedDate] = useState(getTodayInToronto());
   const [intervalStats, setIntervalStats] = useState<IntervalStats[]>([]);
+  const [peakStats, setPeakStats] = useState<PeakStats>({
+    totalPeakEntries: { count: 0, time: '-' },
+    totalPeakExits: { count: 0, time: '-' },
+    malePeakEntries: { count: 0, time: '-' },
+    malePeakExits: { count: 0, time: '-' },
+    femalePeakEntries: { count: 0, time: '-' },
+    femalePeakExits: { count: 0, time: '-' }
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -93,6 +116,15 @@ export default function AdminDashboard() {
           return;
         }
 
+        // Calculate total people currently inside
+        const totalInside = data.reduce((total: number, entry: Entry) => {
+          if (entry.type === 'entry') {
+            return total + 1;
+          } else {
+            return Math.max(0, total - 1);
+          }
+        }, 0);
+
         // Process data into 15-minute intervals
         const intervals: { [interval: string]: IntervalStats } = {};
         
@@ -104,9 +136,13 @@ export default function AdminDashboard() {
             const intervalStr = `${hourStr}:${minuteStr}`;
             intervals[intervalStr] = {
               interval: intervalStr,
-              male: 0,
-              female: 0,
-              total: 0,
+              totalEntries: 0,
+              totalExits: 0,
+              maleEntries: 0,
+              maleExits: 0,
+              femaleEntries: 0,
+              femaleExits: 0,
+              runningTotal: 0
             };
           }
         }
@@ -119,14 +155,18 @@ export default function AdminDashboard() {
             const intervalStr = `${hourStr}:${minuteStr}`;
             intervals[intervalStr] = {
               interval: intervalStr,
-              male: 0,
-              female: 0,
-              total: 0,
+              totalEntries: 0,
+              totalExits: 0,
+              maleEntries: 0,
+              maleExits: 0,
+              femaleEntries: 0,
+              femaleExits: 0,
+              runningTotal: 0
             };
           }
         }
 
-        // Process entries
+        // Process entries for intervals
         data.forEach((entry: Entry) => {
           const entryDate = new Date(entry.timestamp);
           const torontoDate = new Date(entryDate.toLocaleString('en-US', { timeZone: 'America/Toronto' }));
@@ -134,15 +174,26 @@ export default function AdminDashboard() {
           const minute = Math.floor(torontoDate.getMinutes() / 15) * 15;
           const intervalStr = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
           
-          const count = entry.type === 'entry' ? 1 : -1;
-
           if (intervals[intervalStr]) {
-            intervals[intervalStr][entry.gender] += count;
-            intervals[intervalStr].total += count;
+            if (entry.type === 'entry') {
+              intervals[intervalStr].totalEntries++;
+              if (entry.gender === 'male') {
+                intervals[intervalStr].maleEntries++;
+              } else {
+                intervals[intervalStr].femaleEntries++;
+              }
+            } else {
+              intervals[intervalStr].totalExits++;
+              if (entry.gender === 'male') {
+                intervals[intervalStr].maleExits++;
+              } else {
+                intervals[intervalStr].femaleExits++;
+              }
+            }
           }
         });
 
-        // Convert to array, sort by time (handling the day transition), and ensure non-negative counts
+        // Convert to array and sort by time (handling the day transition)
         const statsArray = Object.entries(intervals)
           .sort(([a], [b]) => {
             const hourA = parseInt(a.split(':')[0]);
@@ -154,10 +205,54 @@ export default function AdminDashboard() {
           })
           .map(([_, interval]) => ({
             ...interval,
-            male: Math.max(0, interval.male),
-            female: Math.max(0, interval.female),
-            total: Math.max(0, interval.total)
+            runningTotal: totalInside // Set all intervals to show current total
           }));
+
+        // Calculate peak statistics
+        const peaks = statsArray.reduce((peaks, interval) => {
+          // Total peaks
+          if (interval.totalEntries > peaks.totalPeakEntries.count) {
+            peaks.totalPeakEntries = { count: interval.totalEntries, time: interval.interval };
+          }
+          if (interval.totalExits > peaks.totalPeakExits.count) {
+            peaks.totalPeakExits = { count: interval.totalExits, time: interval.interval };
+          }
+
+          // Male peaks
+          if (interval.maleEntries > peaks.malePeakEntries.count) {
+            peaks.malePeakEntries = { count: interval.maleEntries, time: interval.interval };
+          }
+          if (interval.maleExits > peaks.malePeakExits.count) {
+            peaks.malePeakExits = { count: interval.maleExits, time: interval.interval };
+          }
+
+          // Female peaks
+          if (interval.femaleEntries > peaks.femalePeakEntries.count) {
+            peaks.femalePeakEntries = { count: interval.femaleEntries, time: interval.interval };
+          }
+          if (interval.femaleExits > peaks.femalePeakExits.count) {
+            peaks.femalePeakExits = { count: interval.femaleExits, time: interval.interval };
+          }
+
+          return peaks;
+        }, {
+          totalPeakEntries: { count: 0, time: '-' },
+          totalPeakExits: { count: 0, time: '-' },
+          malePeakEntries: { count: 0, time: '-' },
+          malePeakExits: { count: 0, time: '-' },
+          femalePeakEntries: { count: 0, time: '-' },
+          femalePeakExits: { count: 0, time: '-' }
+        });
+
+        setPeakStats(peaks);
+
+        console.log('Final stats:', {
+          totalEntries: statsArray.reduce((acc, curr) => acc + curr.totalEntries, 0),
+          totalExits: statsArray.reduce((acc, curr) => acc + curr.totalExits, 0),
+          currentlyInside: totalInside,
+          peaks,
+          rawData: data
+        });
 
         setIntervalStats(statsArray);
       } catch (err: any) {
@@ -248,72 +343,256 @@ export default function AdminDashboard() {
           {/* Stats Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-4">
             <div className="backdrop-blur-sm bg-white/5 p-3 sm:p-4 rounded-xl border border-white/10">
-              <h3 className="text-sm sm:text-base font-semibold mb-1 text-gray-400">Total Today</h3>
+              <h3 className="text-sm sm:text-base font-semibold mb-1 text-gray-400">Currently Inside</h3>
               <p className="text-xl sm:text-2xl md:text-3xl font-bold text-white">
-                {intervalStats.reduce((acc, curr) => acc + curr.total, 0)}
+                {intervalStats.length > 0 ? intervalStats[intervalStats.length - 1].runningTotal : 0}
               </p>
             </div>
             <div className="backdrop-blur-sm bg-white/5 p-3 sm:p-4 rounded-xl border border-white/10">
-              <h3 className="text-sm sm:text-base font-semibold mb-1 text-gray-400">Male</h3>
-              <p className="text-xl sm:text-2xl md:text-3xl font-bold text-blue-400">
-                {intervalStats.reduce((acc, curr) => acc + curr.male, 0)}
+              <h3 className="text-sm sm:text-base font-semibold mb-1 text-gray-400">Total Entries</h3>
+              <p className="text-xl sm:text-2xl md:text-3xl font-bold text-green-400">
+                {intervalStats.reduce((acc, curr) => acc + curr.totalEntries, 0)}
               </p>
             </div>
             <div className="backdrop-blur-sm bg-white/5 p-3 sm:p-4 rounded-xl col-span-2 sm:col-span-1 mt-2 sm:mt-0">
-              <h3 className="text-sm sm:text-base font-semibold mb-1 text-gray-400">Female</h3>
-              <p className="text-xl sm:text-2xl md:text-3xl font-bold text-pink-400">
-                {intervalStats.reduce((acc, curr) => acc + curr.female, 0)}
+              <h3 className="text-sm sm:text-base font-semibold mb-1 text-gray-400">Total Exits</h3>
+              <p className="text-xl sm:text-2xl md:text-3xl font-bold text-red-400">
+                {intervalStats.reduce((acc, curr) => acc + curr.totalExits, 0)}
               </p>
             </div>
           </div>
 
           {/* Chart Section */}
-          <div className="backdrop-blur-sm bg-white/5 p-3 sm:p-4 rounded-xl border border-white/10">
-            <h2 className="text-lg sm:text-xl font-semibold mb-3 sm:mb-4 text-gray-200">15-Minute Interval Traffic</h2>
-            {intervalStats.length > 0 ? (
-              <div className="h-[250px] sm:h-[300px] md:h-[400px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={intervalStats} margin={{ top: 5, right: 5, bottom: 25, left: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-                    <XAxis 
-                      dataKey="interval" 
-                      interval={7}
-                      angle={-45}
-                      textAnchor="end"
-                      height={50}
-                      tick={{ fill: 'rgba(255,255,255,0.6)', fontSize: 10 }}
-                      scale="band"
-                    />
-                    <YAxis 
-                      tick={{ fill: 'rgba(255,255,255,0.6)', fontSize: 10 }}
-                      width={25}
-                    />
-                    <Tooltip 
-                      contentStyle={{ 
-                        backgroundColor: 'rgba(17,24,39,0.95)',
-                        border: '1px solid rgba(255,255,255,0.1)',
-                        borderRadius: '0.5rem',
-                        color: 'white',
-                        fontSize: '12px',
-                        padding: '8px'
-                      }}
-                    />
-                    <Legend 
-                      wrapperStyle={{
-                        fontSize: '12px',
-                        marginTop: '8px'
-                      }}
-                    />
-                    <Bar dataKey="male" name="Male" fill="#3B82F6" maxBarSize={50} />
-                    <Bar dataKey="female" name="Female" fill="#EC4899" maxBarSize={50} />
-                  </BarChart>
-                </ResponsiveContainer>
+          <div className="space-y-4">
+            {/* Total Traffic Chart */}
+            <div className="backdrop-blur-sm bg-white/5 p-3 sm:p-4 rounded-xl border border-white/10">
+              <h2 className="text-lg sm:text-xl font-semibold mb-3 sm:mb-4 text-gray-200">Total Traffic (15-Minute Intervals)</h2>
+              {intervalStats.length > 0 ? (
+                <div className="h-[250px] sm:h-[300px] md:h-[400px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={intervalStats} margin={{ top: 5, right: 5, bottom: 25, left: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                      <XAxis 
+                        dataKey="interval" 
+                        interval={7}
+                        angle={-45}
+                        textAnchor="end"
+                        height={50}
+                        tick={{ fill: 'rgba(255,255,255,0.6)', fontSize: 10 }}
+                        scale="band"
+                      />
+                      <YAxis 
+                        tick={{ fill: 'rgba(255,255,255,0.6)', fontSize: 10 }}
+                        width={25}
+                      />
+                      <Tooltip 
+                        contentStyle={{ 
+                          backgroundColor: 'rgba(17,24,39,0.95)',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                          borderRadius: '0.5rem',
+                          color: 'white',
+                          fontSize: '12px',
+                          padding: '8px'
+                        }}
+                      />
+                      <Legend 
+                        wrapperStyle={{
+                          fontSize: '12px',
+                          marginTop: '8px'
+                        }}
+                      />
+                      <Line 
+                        type="monotone"
+                        dataKey="totalEntries" 
+                        name="Entries" 
+                        stroke="#10B981" 
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                      <Line 
+                        type="monotone"
+                        dataKey="totalExits" 
+                        name="Exits" 
+                        stroke="#EF4444" 
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="text-center py-6 text-white/50 text-sm">
+                  No data available for this date
+                </div>
+              )}
+            </div>
+
+            {/* Male Traffic Chart */}
+            <div className="backdrop-blur-sm bg-white/5 p-3 sm:p-4 rounded-xl border border-white/10">
+              <h2 className="text-lg sm:text-xl font-semibold mb-3 sm:mb-4 text-gray-200">Male Traffic (15-Minute Intervals)</h2>
+              {intervalStats.length > 0 ? (
+                <div className="h-[250px] sm:h-[300px] md:h-[400px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={intervalStats} margin={{ top: 5, right: 5, bottom: 25, left: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                      <XAxis 
+                        dataKey="interval" 
+                        interval={7}
+                        angle={-45}
+                        textAnchor="end"
+                        height={50}
+                        tick={{ fill: 'rgba(255,255,255,0.6)', fontSize: 10 }}
+                        scale="band"
+                      />
+                      <YAxis 
+                        tick={{ fill: 'rgba(255,255,255,0.6)', fontSize: 10 }}
+                        width={25}
+                      />
+                      <Tooltip 
+                        contentStyle={{ 
+                          backgroundColor: 'rgba(17,24,39,0.95)',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                          borderRadius: '0.5rem',
+                          color: 'white',
+                          fontSize: '12px',
+                          padding: '8px'
+                        }}
+                      />
+                      <Legend 
+                        wrapperStyle={{
+                          fontSize: '12px',
+                          marginTop: '8px'
+                        }}
+                      />
+                      <Line 
+                        type="monotone"
+                        dataKey="maleEntries" 
+                        name="Male Entries" 
+                        stroke="#3B82F6" 
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                      <Line 
+                        type="monotone"
+                        dataKey="maleExits" 
+                        name="Male Exits" 
+                        stroke="#EF4444" 
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="text-center py-6 text-white/50 text-sm">
+                  No data available for this date
+                </div>
+              )}
+            </div>
+
+            {/* Female Traffic Chart */}
+            <div className="backdrop-blur-sm bg-white/5 p-3 sm:p-4 rounded-xl border border-white/10">
+              <h2 className="text-lg sm:text-xl font-semibold mb-3 sm:mb-4 text-gray-200">Female Traffic (15-Minute Intervals)</h2>
+              {intervalStats.length > 0 ? (
+                <div className="h-[250px] sm:h-[300px] md:h-[400px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={intervalStats} margin={{ top: 5, right: 5, bottom: 25, left: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                      <XAxis 
+                        dataKey="interval" 
+                        interval={7}
+                        angle={-45}
+                        textAnchor="end"
+                        height={50}
+                        tick={{ fill: 'rgba(255,255,255,0.6)', fontSize: 10 }}
+                        scale="band"
+                      />
+                      <YAxis 
+                        tick={{ fill: 'rgba(255,255,255,0.6)', fontSize: 10 }}
+                        width={25}
+                      />
+                      <Tooltip 
+                        contentStyle={{ 
+                          backgroundColor: 'rgba(17,24,39,0.95)',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                          borderRadius: '0.5rem',
+                          color: 'white',
+                          fontSize: '12px',
+                          padding: '8px'
+                        }}
+                      />
+                      <Legend 
+                        wrapperStyle={{
+                          fontSize: '12px',
+                          marginTop: '8px'
+                        }}
+                      />
+                      <Line 
+                        type="monotone"
+                        dataKey="femaleEntries" 
+                        name="Female Entries" 
+                        stroke="#EC4899" 
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                      <Line 
+                        type="monotone"
+                        dataKey="femaleExits" 
+                        name="Female Exits" 
+                        stroke="#EF4444" 
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="text-center py-6 text-white/50 text-sm">
+                  No data available for this date
+                </div>
+              )}
+            </div>
+
+            {/* Peak Traffic Table */}
+            <div className="backdrop-blur-sm bg-white/5 p-3 sm:p-4 rounded-xl border border-white/10">
+              <h2 className="text-lg sm:text-xl font-semibold mb-3 sm:mb-4 text-gray-200">Peak Traffic Statistics</h2>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left">
+                  <thead className="text-xs uppercase text-gray-400">
+                    <tr>
+                      <th className="px-4 py-2">Category</th>
+                      <th className="px-4 py-2">Peak Entries</th>
+                      <th className="px-4 py-2">Time</th>
+                      <th className="px-4 py-2">Peak Exits</th>
+                      <th className="px-4 py-2">Time</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-gray-300">
+                    <tr className="border-t border-white/10">
+                      <td className="px-4 py-2 font-medium">Total</td>
+                      <td className="px-4 py-2 text-green-400">{peakStats.totalPeakEntries.count}</td>
+                      <td className="px-4 py-2">{peakStats.totalPeakEntries.time}</td>
+                      <td className="px-4 py-2 text-red-400">{peakStats.totalPeakExits.count}</td>
+                      <td className="px-4 py-2">{peakStats.totalPeakExits.time}</td>
+                    </tr>
+                    <tr className="border-t border-white/10">
+                      <td className="px-4 py-2 font-medium">Male</td>
+                      <td className="px-4 py-2 text-blue-400">{peakStats.malePeakEntries.count}</td>
+                      <td className="px-4 py-2">{peakStats.malePeakEntries.time}</td>
+                      <td className="px-4 py-2 text-red-400">{peakStats.malePeakExits.count}</td>
+                      <td className="px-4 py-2">{peakStats.malePeakExits.time}</td>
+                    </tr>
+                    <tr className="border-t border-white/10">
+                      <td className="px-4 py-2 font-medium">Female</td>
+                      <td className="px-4 py-2 text-pink-400">{peakStats.femalePeakEntries.count}</td>
+                      <td className="px-4 py-2">{peakStats.femalePeakEntries.time}</td>
+                      <td className="px-4 py-2 text-red-400">{peakStats.femalePeakExits.count}</td>
+                      <td className="px-4 py-2">{peakStats.femalePeakExits.time}</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
-            ) : (
-              <div className="text-center py-6 text-white/50 text-sm">
-                No data available for this date
-              </div>
-            )}
+            </div>
           </div>
         </>
       )}
