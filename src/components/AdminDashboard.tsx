@@ -16,14 +16,6 @@ import {
 } from 'recharts';
 import { supabase, Entry } from '@/lib/supabase';
 
-interface SessionMarker {
-  id: string;
-  timestamp: string;
-  type: 'session_start' | 'session_end';
-  session_id: string;
-  count_before_reset: number;
-}
-
 interface IntervalStats {
   interval: string;
   totalEntries: number;
@@ -33,7 +25,6 @@ interface IntervalStats {
   femaleEntries: number;
   femaleExits: number;
   runningTotal: number;
-  sessionId: string;
 }
 
 interface PeakStats {
@@ -43,7 +34,6 @@ interface PeakStats {
   malePeakExits: { count: number; time: string };
   femalePeakEntries: { count: number; time: string };
   femalePeakExits: { count: number; time: string };
-  sessionId: string;
 }
 
 interface DailyTotal {
@@ -82,13 +72,10 @@ export default function AdminDashboard() {
     malePeakEntries: { count: 0, time: '-' },
     malePeakExits: { count: 0, time: '-' },
     femalePeakEntries: { count: 0, time: '-' },
-    femalePeakExits: { count: 0, time: '-' },
-    sessionId: ''
+    femalePeakExits: { count: 0, time: '-' }
   });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [currentSessionId, setCurrentSessionId] = useState<string>('');
-  const [sessionStartTime, setSessionStartTime] = useState<string>('');
   const [totalInside, setTotalInside] = useState(0);
 
   // Fetch and process interval statistics for the selected date
@@ -97,79 +84,74 @@ export default function AdminDashboard() {
       setIsLoading(true);
       setError(null);
 
-      // Create date objects for 4 PM on selected date to 3 AM next day in Toronto time
-      const startDate = new Date(`${selectedDate}T16:00:00-04:00`); // Toronto timezone offset
-      const endDate = new Date(`${selectedDate}T03:00:00-04:00`);
+      // Create date objects for 11 AM on selected date to 3 AM next day in Toronto time
+      const startDate = new Date(`${selectedDate}T11:00:00`);
+      const endDate = new Date(`${selectedDate}T03:00:00`);
       endDate.setDate(endDate.getDate() + 1);
+
+      // Convert to Toronto timezone
+      const torontoStartDate = new Date(startDate.toLocaleString('en-US', { timeZone: 'America/Toronto' }));
+      const torontoEndDate = new Date(endDate.toLocaleString('en-US', { timeZone: 'America/Toronto' }));
 
       // Log date range for debugging
       console.log('Fetching interval stats for:', {
-        date: selectedDate,
+        selectedDate,
         startDate: startDate.toISOString(),
         endDate: endDate.toISOString(),
-        startTimeLocal: startDate.toLocaleString('en-US', { timeZone: 'America/Toronto' }),
-        endTimeLocal: endDate.toLocaleString('en-US', { timeZone: 'America/Toronto' })
+        torontoStartDate: torontoStartDate.toISOString(),
+        torontoEndDate: torontoEndDate.toISOString(),
+        startTimeLocal: torontoStartDate.toLocaleString('en-US', { timeZone: 'America/Toronto' }),
+        endTimeLocal: torontoEndDate.toLocaleString('en-US', { timeZone: 'America/Toronto' })
       });
 
-      // Get or create session for the selected date
-      const { data: sessionData, error: sessionError } = await supabase
-        .from('entries')
-        .select('*')
-        .eq('type', 'session_start')
-        .gte('timestamp', startDate.toISOString())
-        .lte('timestamp', endDate.toISOString())
-        .order('timestamp', { ascending: false })
-        .limit(1);
+      // Check if the selected date is today
+      const today = new Date();
+      const todayInToronto = new Date(today.toLocaleString('en-US', { timeZone: 'America/Toronto' }));
+      const isToday = selectedDate === todayInToronto.toISOString().split('T')[0];
 
-      if (sessionError) throw sessionError;
+      let data;
+      let error;
 
-      let activeSessionId: string;
-      
-      // Create new session if none exists for the date
-      if (!sessionData || sessionData.length === 0) {
-        const newSessionId = `${selectedDate}-${Date.now()}`;
-        const { data: newSession, error: createError } = await supabase
+      if (isToday) {
+        // For today, fetch from entries table
+        const result = await supabase
           .from('entries')
-          .insert({
-            timestamp: new Date().toISOString(),
-            type: 'session_start',
-            gender: 'system',
-            session_id: newSessionId,
-            count_before_reset: 0
-          })
-          .select()
-          .single();
+          .select('*')
+          .or('type.eq.entry,type.eq.exit')
+          .gte('timestamp', torontoStartDate.toISOString())
+          .lte('timestamp', torontoEndDate.toISOString())
+          .order('timestamp', { ascending: true });
 
-        if (createError) throw createError;
-        
-        activeSessionId = newSessionId;
-        setSessionStartTime(new Date().toISOString());
+        data = result.data;
+        error = result.error;
       } else {
-        activeSessionId = sessionData[0].session_id;
-        setSessionStartTime(sessionData[0].timestamp);
+        // For past dates, fetch from historical_entries table
+        const result = await supabase
+          .from('historical_entries')
+          .select('*')
+          .gte('timestamp', torontoStartDate.toISOString())
+          .lte('timestamp', torontoEndDate.toISOString())
+          .order('timestamp', { ascending: true });
+
+        data = result.data;
+        error = result.error;
       }
 
-      setCurrentSessionId(activeSessionId);
+      if (error) {
+        console.error('Entries fetch error:', error);
+        throw error;
+      }
 
-      // Fetch regular entries for the current session
-      const { data, error } = await supabase
-        .from('entries')
-        .select('*')
-        .eq('session_id', activeSessionId)
-        .or('type.eq.entry,type.eq.exit')
-        .order('timestamp', { ascending: true });
-
-      if (error) throw error;
-
-      console.log('Fetched interval entries:', data);
+      console.log('Fetched entries:', data);
 
       if (!data || data.length === 0) {
+        console.log('No entries found for date range');
         setIntervalStats([]);
         setTotalInside(0);
         return;
       }
 
-      // Calculate total people currently inside for this session
+      // Calculate total people currently inside
       const totalInside = data.reduce((total: number, entry: Entry) => {
         if (entry.type === 'entry') {
           return total + 1;
@@ -178,13 +160,14 @@ export default function AdminDashboard() {
         }
       }, 0);
 
+      console.log('Total people inside:', totalInside);
       setTotalInside(totalInside);
 
       // Initialize intervals map for processing
       const intervals: { [interval: string]: IntervalStats } = {};
       
-      // Initialize intervals from 16:00 to 23:59
-      for (let hour = 16; hour < 24; hour++) {
+      // Initialize intervals from 11:00 to 23:59
+      for (let hour = 11; hour < 24; hour++) {
         for (let minute = 0; minute < 60; minute += 15) {
           const hourStr = hour.toString().padStart(2, '0');
           const minuteStr = minute.toString().padStart(2, '0');
@@ -197,8 +180,7 @@ export default function AdminDashboard() {
             maleExits: 0,
             femaleEntries: 0,
             femaleExits: 0,
-            runningTotal: 0,
-            sessionId: activeSessionId
+            runningTotal: 0
           };
         }
       }
@@ -217,8 +199,7 @@ export default function AdminDashboard() {
             maleExits: 0,
             femaleEntries: 0,
             femaleExits: 0,
-            runningTotal: 0,
-            sessionId: activeSessionId
+            runningTotal: 0
           };
         }
       }
@@ -230,6 +211,16 @@ export default function AdminDashboard() {
         const hour = torontoDate.getHours();
         const minute = Math.floor(torontoDate.getMinutes() / 15) * 15;
         const intervalStr = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+        
+        console.log('Processing entry:', {
+          timestamp: entry.timestamp,
+          torontoTime: torontoDate.toISOString(),
+          hour,
+          minute,
+          interval: intervalStr,
+          type: entry.type,
+          gender: entry.gender
+        });
         
         if (intervals[intervalStr]) {
           if (entry.type === 'entry') {
@@ -247,6 +238,8 @@ export default function AdminDashboard() {
               intervals[intervalStr].femaleExits++;
             }
           }
+        } else {
+          console.warn('No interval found for:', intervalStr);
         }
       });
 
@@ -264,6 +257,8 @@ export default function AdminDashboard() {
           ...interval,
           runningTotal: totalInside
         }));
+
+      console.log('Processed intervals:', statsArray);
 
       // Calculate peak statistics for each metric
       const peaks = statsArray.reduce((peaks, interval) => {
@@ -295,9 +290,10 @@ export default function AdminDashboard() {
         malePeakEntries: { count: 0, time: '-' },
         malePeakExits: { count: 0, time: '-' },
         femalePeakEntries: { count: 0, time: '-' },
-        femalePeakExits: { count: 0, time: '-' },
-        sessionId: activeSessionId
+        femalePeakExits: { count: 0, time: '-' }
       });
+
+      console.log('Peak statistics:', peaks);
 
       // Update state with processed data
       setPeakStats(peaks);
@@ -345,28 +341,6 @@ export default function AdminDashboard() {
               onChange={(e) => setSelectedDate(e.target.value)}
               className="w-full sm:w-auto bg-gray-800 text-white px-3 py-2 rounded-lg border border-gray-700"
             />
-          </div>
-        </div>
-
-        {/* Session Information Display */}
-        <div className="mb-4 sm:mb-6 p-3 sm:p-4 bg-gray-800 rounded-lg">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1 sm:gap-2 text-sm sm:text-base">
-            <div>
-              <span className="text-gray-400">Session Started: </span>
-              <span className="font-medium">
-                {sessionStartTime 
-                  ? new Date(sessionStartTime).toLocaleTimeString('en-US', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      timeZone: 'America/Toronto'
-                    })
-                  : '-'}
-              </span>
-            </div>
-            <div>
-              <span className="text-gray-400">ID: </span>
-              <span className="font-mono text-xs sm:text-sm">{currentSessionId || '-'}</span>
-            </div>
           </div>
         </div>
 
