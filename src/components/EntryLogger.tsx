@@ -6,24 +6,44 @@ import { PlusIcon, MinusIcon } from '@heroicons/react/24/solid';
 import { cn } from '@/lib/utils';
 import { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 
+// Type definitions for state management
 interface CountState {
   male: number;
   female: number;
 }
 
+// Type definition for entry records in the database
 interface Entry {
   gender: Gender;
   type: EntryType;
+  timestamp: string;
+}
+
+// Type definition for historical entry records
+interface HistoricalEntry {
+  id: string;
+  date: string;
+  start_time: string;
+  end_time: string;
+  total_entries: number;
+  total_exits: number;
+  male_entries: number;
+  male_exits: number;
+  female_entries: number;
+  female_exits: number;
+  final_count: number;
 }
 
 export default function EntryLogger() {
-  const [isLoading, setIsLoading] = useState(false);
-  const [showFakeCount, setShowFakeCount] = useState(false);
-  const [currentCount, setCurrentCount] = useState<CountState>({ male: 0, female: 0 });
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [showResetConfirm, setShowResetConfirm] = useState(false);
-  const [isConnected, setIsConnected] = useState(true);
+  // State management for component
+  const [isLoading, setIsLoading] = useState(false);          // Loading state for API calls
+  const [showFakeCount, setShowFakeCount] = useState(false);  // Debug feature for showing fake count
+  const [currentCount, setCurrentCount] = useState<CountState>({ male: 0, female: 0 }); // Current count of people inside
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);  // Error message display
+  const [showResetConfirm, setShowResetConfirm] = useState(false);       // Reset confirmation modal
+  const [isConnected, setIsConnected] = useState(true);                  // Database connection status
 
+  // Check database connection on component mount
   useEffect(() => {
     const checkConnection = async () => {
       try {
@@ -41,12 +61,14 @@ export default function EntryLogger() {
     checkConnection();
   }, []);
 
+  // Set up real-time subscription and initial data fetch
   useEffect(() => {
     if (!isConnected) return;
 
+    // Function to fetch and calculate current counts from entries
     const fetchCurrentCounts = async () => {
       try {
-        // Get all entries since we don't have reset markers yet
+        // Get all current entries from database
         const { data: entries, error } = await supabase
           .from('entries')
           .select('gender, type');
@@ -59,9 +81,16 @@ export default function EntryLogger() {
 
         if (!entries) return;
 
+        // Calculate current counts by processing all entries
         const counts = entries.reduce((acc: CountState, entry: Entry) => {
-          const change = entry.type === 'entry' ? 1 : -1;
-          acc[entry.gender] += change;
+          if (entry.type === 'entry' || entry.type === 'exit') {
+            const change = entry.type === 'entry' ? 1 : -1;
+            if (entry.gender === 'male') {
+              acc.male += change;
+            } else if (entry.gender === 'female') {
+              acc.female += change;
+            }
+          }
           return acc;
         }, { male: 0, female: 0 });
 
@@ -72,8 +101,10 @@ export default function EntryLogger() {
       }
     };
 
+    // Initial fetch of current counts
     fetchCurrentCounts();
 
+    // Set up real-time subscription to entry changes
     const subscription = supabase
       .channel('entries-changes')
       .on('postgres_changes' as const,
@@ -82,26 +113,9 @@ export default function EntryLogger() {
           schema: 'public',
           table: 'entries',
         },
-        async (payload: RealtimePostgresChangesPayload<Entry>) => {
-          // Refetch current counts to ensure accuracy
-          const { data: entries, error } = await supabase
-            .from('entries')
-            .select('gender, type');
-
-          if (error) {
-            console.error('Error fetching entries after change:', error);
-            return;
-          }
-
-          if (!entries) return;
-
-          const counts = entries.reduce((acc: CountState, entry: Entry) => {
-            const change = entry.type === 'entry' ? 1 : -1;
-            acc[entry.gender] += change;
-            return acc;
-          }, { male: 0, female: 0 });
-
-          setCurrentCount(counts);
+        async () => {
+          // Refetch counts whenever there's a change in entries
+          await fetchCurrentCounts();
         }
       )
       .subscribe((status: 'SUBSCRIBED' | 'CHANNEL_ERROR') => {
@@ -113,19 +127,26 @@ export default function EntryLogger() {
         }
       });
 
+    // Cleanup subscription on component unmount
     return () => {
       subscription.unsubscribe();
     };
   }, [isConnected]);
 
-  const handleEntry = async (gender: Gender, type: EntryType) => {
+  // Handle entry/exit button clicks
+  const handleEntry = async (gender: 'male' | 'female', type: EntryType) => {
     try {
       setIsLoading(true);
       setErrorMessage(null);
 
+      // Insert new entry record
       const { error } = await supabase
         .from('entries')
-        .insert([{ gender, type, timestamp: new Date().toISOString() }])
+        .insert([{ 
+          gender, 
+          type, 
+          timestamp: new Date().toISOString()
+        }])
         .select();
 
       if (error) {
@@ -134,10 +155,16 @@ export default function EntryLogger() {
         return;
       }
 
-      setCurrentCount(prev => ({
-        ...prev,
-        [gender]: Math.max(0, prev[gender] + (type === 'entry' ? 1 : -1))
-      }));
+      // Update local count state
+      setCurrentCount(prev => {
+        const newCount = { ...prev };
+        if (gender === 'male') {
+          newCount.male = Math.max(0, prev.male + (type === 'entry' ? 1 : -1));
+        } else if (gender === 'female') {
+          newCount.female = Math.max(0, prev.female + (type === 'entry' ? 1 : -1));
+        }
+        return newCount;
+      });
 
     } catch (error: any) {
       console.error('Error logging entry:', error);
@@ -147,33 +174,165 @@ export default function EntryLogger() {
     }
   };
 
+  // Handle reset button click (archives current data and resets counter)
   const handleReset = async () => {
     try {
       setIsLoading(true);
       setErrorMessage(null);
       
-      // Insert a new entry for both genders to set the count to 0
-      const currentMaleCount = currentCount.male;
-      const currentFemaleCount = currentCount.female;
+      // Get current time in Toronto timezone
+      const now = new Date();
+      const torontoDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/Toronto' }));
       
-      if (currentMaleCount > 0) {
-        const { error: maleError } = await supabase
-          .from('entries')
-          .insert([{ gender: 'male', type: 'exit', timestamp: new Date().toISOString() }])
-          .select();
+      // Fetch all current entries for archiving
+      const { data: currentEntries, error: fetchError } = await supabase
+        .from('entries')
+        .select('*')
+        .order('timestamp', { ascending: true });
 
-        if (maleError) throw maleError;
+      if (fetchError) throw fetchError;
+
+      if (currentEntries && currentEntries.length > 0) {
+        // Calculate summary statistics for the historical entry
+        const stats = currentEntries.reduce((acc: {
+          total_entries: number;
+          total_exits: number;
+          male_entries: number;
+          male_exits: number;
+          female_entries: number;
+          female_exits: number;
+        }, entry: Entry) => {
+          if (entry.type === 'entry') {
+            acc.total_entries++;
+            if (entry.gender === 'male') acc.male_entries++;
+            else if (entry.gender === 'female') acc.female_entries++;
+          } else if (entry.type === 'exit') {
+            acc.total_exits++;
+            if (entry.gender === 'male') acc.male_exits++;
+            else if (entry.gender === 'female') acc.female_exits++;
+          }
+          return acc;
+        }, {
+          total_entries: 0,
+          total_exits: 0,
+          male_entries: 0,
+          male_exits: 0,
+          female_entries: 0,
+          female_exits: 0
+        });
+
+        // Create a new historical entry record with summary data
+        const { data: historicalEntry, error: archiveError } = await supabase
+          .from('historical_entries')
+          .insert({
+            date: torontoDate.toISOString().split('T')[0],
+            start_time: currentEntries[0].timestamp,
+            end_time: torontoDate.toISOString(),
+            ...stats,
+            final_count: currentCount.male + currentCount.female
+          })
+          .select()
+          .single();
+
+        if (archiveError) throw archiveError;
+
+        // Process entries into 15-minute intervals for detailed historical data
+        const intervals = new Map<string, {
+          start: Date;
+          end: Date;
+          total_entries: number;
+          total_exits: number;
+          male_entries: number;
+          male_exits: number;
+          female_entries: number;
+          female_exits: number;
+          running_total: number;
+        }>();
+
+        // Calculate statistics for each 15-minute interval
+        let runningTotal = 0;
+        currentEntries.forEach((entry: Entry) => {
+          // Calculate interval start/end times
+          const entryDate = new Date(entry.timestamp);
+          const minutes = entryDate.getMinutes();
+          const intervalMinutes = Math.floor(minutes / 15) * 15;
+          const intervalStart = new Date(entryDate);
+          intervalStart.setMinutes(intervalMinutes, 0, 0);
+          const intervalEnd = new Date(intervalStart);
+          intervalEnd.setMinutes(intervalMinutes + 14, 59, 999);
+          
+          const intervalKey = intervalStart.toISOString();
+          
+          // Initialize interval if it doesn't exist
+          if (!intervals.has(intervalKey)) {
+            intervals.set(intervalKey, {
+              start: intervalStart,
+              end: intervalEnd,
+              total_entries: 0,
+              total_exits: 0,
+              male_entries: 0,
+              male_exits: 0,
+              female_entries: 0,
+              female_exits: 0,
+              running_total: 0
+            });
+          }
+
+          const interval = intervals.get(intervalKey)!;
+          
+          // Update interval statistics based on entry type and gender
+          if (entry.type === 'entry') {
+            interval.total_entries++;
+            runningTotal++;
+            if (entry.gender === 'male') {
+              interval.male_entries++;
+            } else if (entry.gender === 'female') {
+              interval.female_entries++;
+            }
+          } else if (entry.type === 'exit') {
+            interval.total_exits++;
+            runningTotal = Math.max(0, runningTotal - 1);
+            if (entry.gender === 'male') {
+              interval.male_exits++;
+            } else if (entry.gender === 'female') {
+              interval.female_exits++;
+            }
+          }
+          
+          interval.running_total = runningTotal;
+        });
+
+        // Prepare interval data for database insertion
+        const intervalData = Array.from(intervals.values()).map(interval => ({
+          historical_entry_id: historicalEntry.id,
+          interval_start: interval.start.toISOString(),
+          interval_end: interval.end.toISOString(),
+          total_entries: interval.total_entries,
+          total_exits: interval.total_exits,
+          male_entries: interval.male_entries,
+          male_exits: interval.male_exits,
+          female_entries: interval.female_entries,
+          female_exits: interval.female_exits,
+          running_total: interval.running_total
+        }));
+
+        // Save interval data to historical_intervals table
+        const { error: intervalError } = await supabase
+          .from('historical_intervals')
+          .insert(intervalData);
+
+        if (intervalError) throw intervalError;
+
+        // Clear all current entries after archiving
+        const { error: clearError } = await supabase
+          .from('entries')
+          .delete()
+          .gte('timestamp', '1970-01-01'); // Delete all entries
+
+        if (clearError) throw clearError;
       }
 
-      if (currentFemaleCount > 0) {
-        const { error: femaleError } = await supabase
-          .from('entries')
-          .insert([{ gender: 'female', type: 'exit', timestamp: new Date().toISOString() }])
-          .select();
-
-        if (femaleError) throw femaleError;
-      }
-
+      // Reset UI state
       setShowResetConfirm(false);
       setCurrentCount({ male: 0, female: 0 });
     } catch (error: any) {
@@ -184,6 +343,7 @@ export default function EntryLogger() {
     }
   };
 
+  // Calculate total count for display
   const totalCount = showFakeCount ? 570 : currentCount.male + currentCount.female;
 
   return (

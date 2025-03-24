@@ -10,6 +10,9 @@ A real-time venue occupancy tracking system built with Next.js, Supabase, and Ty
 - 📱 Mobile-friendly UI
 - 🔒 Admin authentication
 - 📈 Real-time analytics dashboard
+- 📅 Historical data analysis
+- 🔄 Session-based tracking
+- 📊 Gender-specific analytics
 
 ## Tech Stack
 
@@ -21,10 +24,71 @@ A real-time venue occupancy tracking system built with Next.js, Supabase, and Ty
 - Hosting: Vercel
 - Real-time updates: Supabase Realtime
 
-## Prerequisites
+## Architecture Overview
 
-- Node.js 18+ and npm
-- Supabase account and project
+### Database Schema
+
+The application uses three main tables:
+
+1. **entries**
+   - Primary table for real-time entry/exit tracking
+   - Stores individual entry/exit records with gender and timestamp
+   - Supports session markers (session_start, session_end)
+   - Includes count_before_reset for session statistics
+
+2. **historical_entries**
+   - Archives completed sessions
+   - Stores aggregated statistics for each session
+   - Maintains historical records for long-term analysis
+
+3. **historical_intervals**
+   - Stores 15-minute interval data
+   - Enables detailed analysis of peak hours
+   - Maintains gender-specific statistics per interval
+
+### Components
+
+#### EntryLogger Component
+- Primary interface for real-time entry/exit tracking
+- Features:
+  - Real-time counter display
+  - Gender-specific entry/exit buttons
+  - Session management
+  - Reset functionality with data archiving
+  - Connection status monitoring
+  - Error handling and recovery
+
+#### AdminDashboard Component
+- Comprehensive analytics interface
+- Features:
+  - Date-based historical data viewing
+  - Real-time statistics
+  - Interactive charts:
+    - Total traffic visualization
+    - Gender-specific traffic patterns
+  - Peak traffic analysis
+  - Session management
+  - Mobile-responsive design
+
+### Data Flow
+
+1. **Entry/Exit Recording:**
+   - User clicks entry/exit buttons
+   - Data is sent to Supabase
+   - Real-time updates via Supabase Realtime
+   - Counter updates immediately
+
+2. **Session Management:**
+   - Sessions are created for each day
+   - Reset functionality archives current data
+   - Historical data is processed into intervals
+   - Statistics are aggregated for analysis
+
+3. **Analytics Processing:**
+   - 15-minute interval calculations
+   - Peak hour identification
+   - Gender-specific statistics
+   - Historical trend analysis
 
 ## Setup
 
@@ -45,21 +109,50 @@ A real-time venue occupancy tracking system built with Next.js, Supabase, and Ty
    -- Create entries table
    create table entries (
      id uuid default uuid_generate_v4() primary key,
-     gender text check (gender in ('male', 'female')),
-     type text check (type in ('entry', 'exit')),
-     timestamp timestamptz default now()
+     gender text check (gender in ('male', 'female', 'system')),
+     type text check (type in ('entry', 'exit', 'session_start', 'session_end')),
+     timestamp timestamptz default now(),
+     session_id varchar,
+     count_before_reset integer default 0
    );
 
-   -- Create admins table
-   create table admins (
-     id uuid references auth.users primary key,
-     email text unique not null,
-     role text check (role = 'admin')
+   -- Create historical_entries table
+   create table historical_entries (
+     id uuid default uuid_generate_v4() primary key,
+     session_id varchar,
+     date date,
+     total_entries integer,
+     total_exits integer,
+     peak_entries integer,
+     peak_exits integer,
+     peak_time_entries time,
+     peak_time_exits time,
+     male_entries integer,
+     female_entries integer,
+     male_exits integer,
+     female_exits integer,
+     created_at timestamptz default now()
+   );
+
+   -- Create historical_intervals table
+   create table historical_intervals (
+     id uuid default uuid_generate_v4() primary key,
+     session_id varchar,
+     interval_start timestamptz,
+     interval_end timestamptz,
+     total_entries integer,
+     total_exits integer,
+     male_entries integer,
+     female_entries integer,
+     male_exits integer,
+     female_exits integer,
+     created_at timestamptz default now()
    );
 
    -- Enable Row Level Security (RLS)
    alter table entries enable row level security;
-   alter table admins enable row level security;
+   alter table historical_entries enable row level security;
+   alter table historical_intervals enable row level security;
 
    -- Create policies
    create policy "Anyone can insert entries" on entries
@@ -70,9 +163,13 @@ A real-time venue occupancy tracking system built with Next.js, Supabase, and Ty
      for select to anon
      using (true);
 
-   create policy "Only admins can view admin data" on admins
+   create policy "Authenticated users can view historical data" on historical_entries
      for select to authenticated
-     using (auth.uid() = id);
+     using (true);
+
+   create policy "Authenticated users can view interval data" on historical_intervals
+     for select to authenticated
+     using (true);
    ```
 
 4. Create a `.env.local` file with your Supabase credentials:
@@ -86,29 +183,25 @@ A real-time venue occupancy tracking system built with Next.js, Supabase, and Ty
    npm run dev
    ```
 
-6. Create an admin user:
-   - Sign up a user through Supabase Authentication
-   - Insert the user into the admins table with the admin role:
-     ```sql
-     insert into admins (id, email, role)
-     values ('user_id_from_auth', 'admin@example.com', 'admin');
-     ```
-
 ## Usage
 
-1. **Entry/Exit Logging:**
-   - Open the main page
-   - Use the + and - buttons to log entries and exits
-   - Counts update in real-time
+### Entry Logger Page
+1. Open the main page
+2. Use the + and - buttons to log entries and exits
+3. Select gender for each entry/exit
+4. Monitor real-time counts
+5. Use reset button to archive current session
 
-2. **Admin Dashboard:**
-   - Navigate to `/admin`
-   - Log in with admin credentials
-   - View real-time analytics and historical data
-
-3. **Fake Total:**
-   - Click the "Show Fake Count" button to display 570
-   - Click again to show the real count
+### Admin Dashboard
+1. Navigate to `/admin`
+2. Log in with admin credentials
+3. Features available:
+   - Date selection for historical data
+   - Real-time statistics cards
+   - Interactive traffic charts
+   - Peak hour analysis
+   - Gender-specific analytics
+   - Session information display
 
 ## Development
 

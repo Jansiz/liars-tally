@@ -38,14 +38,16 @@ if (typeof window !== 'undefined') {
 
 export { supabase };
 
-export type Gender = 'male' | 'female';
-export type EntryType = 'entry' | 'exit';
+export type Gender = 'male' | 'female' | 'system';
+export type EntryType = 'entry' | 'exit' | 'session_start' | 'session_end';
 
 export interface Entry {
   id: string;
   gender: Gender;
   timestamp: string;
   type: EntryType;
+  session_id?: string;
+  count_before_reset?: number;
 }
 
 export interface Admin {
