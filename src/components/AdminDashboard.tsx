@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Image from 'next/image';
 import {
   BarChart,
@@ -14,15 +14,10 @@ import {
   LineChart,
   Line,
 } from 'recharts';
-import { supabase, Entry } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 
-interface SessionMarker {
-  id: string;
-  timestamp: string;
-  type: 'session_start' | 'session_end';
-  session_id: string;
-  count_before_reset: number;
-}
+type Gender = 'male' | 'female';
+
 
 interface IntervalStats {
   interval: string;
@@ -33,33 +28,32 @@ interface IntervalStats {
   femaleEntries: number;
   femaleExits: number;
   runningTotal: number;
-  sessionId: string;
 }
 
 interface PeakStats {
-  totalPeakEntries: { count: number; time: string };
-  totalPeakExits: { count: number; time: string };
-  malePeakEntries: { count: number; time: string };
-  malePeakExits: { count: number; time: string };
-  femalePeakEntries: { count: number; time: string };
-  femalePeakExits: { count: number; time: string };
-  sessionId: string;
+  totalEntries: number;
+  totalExits: number;
+  maleEntries: number;
+  femaleEntries: number;
+  maleExits: number;
+  femaleExits: number;
+  peakEntryInterval: string;
+  peakExitInterval: string;
+  maxTraffic: number;
 }
 
-interface DailyTotal {
+interface Entry {
+  id: string;
+  gender: Gender;
+  type: 'entry' | 'exit';
+  timestamp: string;
   date: string;
-  total: number;
-  male: number;
-  female: number;
 }
 
 export default function AdminDashboard() {
   // Get current date in Toronto timezone
   const getTodayInToronto = () => {
-    // Create a date object for the current time in UTC
     const now = new Date();
-    
-    // Convert to Toronto time
     const torontoTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Toronto' }));
     
     // If it's between midnight and 3 AM Toronto time, show the previous day
@@ -67,124 +61,47 @@ export default function AdminDashboard() {
       torontoTime.setDate(torontoTime.getDate() - 1);
     }
     
-    // Format as YYYY-MM-DD
-    return torontoTime.getFullYear() + '-' + 
-           String(torontoTime.getMonth() + 1).padStart(2, '0') + '-' + 
-           String(torontoTime.getDate()).padStart(2, '0');
+    return torontoTime.toISOString().split('T')[0];
   };
 
-  // Initialize with Toronto date
   const [selectedDate, setSelectedDate] = useState(getTodayInToronto());
   const [intervalStats, setIntervalStats] = useState<IntervalStats[]>([]);
-  const [peakStats, setPeakStats] = useState<PeakStats>({
-    totalPeakEntries: { count: 0, time: '-' },
-    totalPeakExits: { count: 0, time: '-' },
-    malePeakEntries: { count: 0, time: '-' },
-    malePeakExits: { count: 0, time: '-' },
-    femalePeakEntries: { count: 0, time: '-' },
-    femalePeakExits: { count: 0, time: '-' },
-    sessionId: ''
-  });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [currentSessionId, setCurrentSessionId] = useState<string>('');
-  const [sessionStartTime, setSessionStartTime] = useState<string>('');
-  const [totalInside, setTotalInside] = useState(0);
+  const [entries, setEntries] = useState<Entry[]>([]);
 
-  // Fetch and process interval statistics for the selected date
   const fetchIntervalStats = async () => {
     try {
       setIsLoading(true);
       setError(null);
 
-      // Create date objects for 4 PM on selected date to 3 AM next day in Toronto time
-      const startDate = new Date(`${selectedDate}T16:00:00-04:00`); // Toronto timezone offset
-      const endDate = new Date(`${selectedDate}T03:00:00-04:00`);
-      endDate.setDate(endDate.getDate() + 1);
-
-      // Log date range for debugging
-      console.log('Fetching interval stats for:', {
-        date: selectedDate,
-        startDate: startDate.toISOString(),
-        endDate: endDate.toISOString(),
-        startTimeLocal: startDate.toLocaleString('en-US', { timeZone: 'America/Toronto' }),
-        endTimeLocal: endDate.toLocaleString('en-US', { timeZone: 'America/Toronto' })
-      });
-
-      // Get or create session for the selected date
-      const { data: sessionData, error: sessionError } = await supabase
+      // Get entries for the selected date
+      const { data: entries, error } = await supabase
         .from('entries')
         .select('*')
-        .eq('type', 'session_start')
-        .gte('timestamp', startDate.toISOString())
-        .lte('timestamp', endDate.toISOString())
-        .order('timestamp', { ascending: false })
-        .limit(1);
-
-      if (sessionError) throw sessionError;
-
-      let activeSessionId: string;
-      
-      // Create new session if none exists for the date
-      if (!sessionData || sessionData.length === 0) {
-        const newSessionId = `${selectedDate}-${Date.now()}`;
-        const { data: newSession, error: createError } = await supabase
-          .from('entries')
-          .insert({
-            timestamp: new Date().toISOString(),
-            type: 'session_start',
-            gender: 'system',
-            session_id: newSessionId,
-            count_before_reset: 0
-          })
-          .select()
-          .single();
-
-        if (createError) throw createError;
-        
-        activeSessionId = newSessionId;
-        setSessionStartTime(new Date().toISOString());
-      } else {
-        activeSessionId = sessionData[0].session_id;
-        setSessionStartTime(sessionData[0].timestamp);
-      }
-
-      setCurrentSessionId(activeSessionId);
-
-      // Fetch regular entries for the current session
-      const { data, error } = await supabase
-        .from('entries')
-        .select('*')
-        .eq('session_id', activeSessionId)
+        .eq('date', selectedDate)
         .or('type.eq.entry,type.eq.exit')
         .order('timestamp', { ascending: true });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Entries fetch error:', error);
+        throw error;
+      }
 
-      console.log('Fetched interval entries:', data);
-
-      if (!data || data.length === 0) {
+      if (!entries || entries.length === 0) {
+        console.log('No entries found for date range');
         setIntervalStats([]);
-        setTotalInside(0);
+        setEntries([]);
         return;
       }
 
-      // Calculate total people currently inside for this session
-      const totalInside = data.reduce((total: number, entry: Entry) => {
-        if (entry.type === 'entry') {
-          return total + 1;
-        } else {
-          return Math.max(0, total - 1);
-        }
-      }, 0);
-
-      setTotalInside(totalInside);
+      setEntries(entries);
 
       // Initialize intervals map for processing
       const intervals: { [interval: string]: IntervalStats } = {};
       
-      // Initialize intervals from 16:00 to 23:59
-      for (let hour = 16; hour < 24; hour++) {
+      // Initialize intervals from 4:00 to 23:59
+      for (let hour = 4; hour < 24; hour++) {
         for (let minute = 0; minute < 60; minute += 15) {
           const hourStr = hour.toString().padStart(2, '0');
           const minuteStr = minute.toString().padStart(2, '0');
@@ -197,8 +114,7 @@ export default function AdminDashboard() {
             maleExits: 0,
             femaleEntries: 0,
             femaleExits: 0,
-            runningTotal: 0,
-            sessionId: activeSessionId
+            runningTotal: 0
           };
         }
       }
@@ -217,18 +133,17 @@ export default function AdminDashboard() {
             maleExits: 0,
             femaleEntries: 0,
             femaleExits: 0,
-            runningTotal: 0,
-            sessionId: activeSessionId
+            runningTotal: 0
           };
         }
       }
 
       // Process entries and aggregate into 15-minute intervals
-      data.forEach((entry: Entry) => {
+      entries.forEach((entry: Entry) => {
         const entryDate = new Date(entry.timestamp);
-        const torontoDate = new Date(entryDate.toLocaleString('en-US', { timeZone: 'America/Toronto' }));
-        const hour = torontoDate.getHours();
-        const minute = Math.floor(torontoDate.getMinutes() / 15) * 15;
+        const torontoTime = new Date(entryDate.toLocaleString('en-US', { timeZone: 'America/Toronto' }));
+        const hour = torontoTime.getHours();
+        const minute = Math.floor(torontoTime.getMinutes() / 15) * 15;
         const intervalStr = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
         
         if (intervals[intervalStr]) {
@@ -239,7 +154,7 @@ export default function AdminDashboard() {
             } else {
               intervals[intervalStr].femaleEntries++;
             }
-          } else {
+          } else if (entry.type === 'exit') {
             intervals[intervalStr].totalExits++;
             if (entry.gender === 'male') {
               intervals[intervalStr].maleExits++;
@@ -251,56 +166,56 @@ export default function AdminDashboard() {
       });
 
       // Convert intervals object to sorted array and calculate running totals
+      let runningTotal = 0;
       const statsArray = Object.entries(intervals)
         .sort(([a], [b]) => {
           const hourA = parseInt(a.split(':')[0]);
           const hourB = parseInt(b.split(':')[0]);
-          // Adjust hours after midnight to be > 24 for proper sorting
           const adjustedHourA = hourA < 4 ? hourA + 24 : hourA;
           const adjustedHourB = hourB < 4 ? hourB + 24 : hourB;
           return adjustedHourA - adjustedHourB;
         })
-        .map(([_, interval]) => ({
-          ...interval,
-          runningTotal: totalInside
-        }));
+        .map(([_, interval]) => {
+          runningTotal += interval.totalEntries - interval.totalExits;
+          return {
+            ...interval,
+            runningTotal: Math.max(0, runningTotal)
+          };
+        });
 
-      // Calculate peak statistics for each metric
+      // Calculate peak statistics
       const peaks = statsArray.reduce((peaks, interval) => {
-        // Update total peaks
-        if (interval.totalEntries > peaks.totalPeakEntries.count) {
-          peaks.totalPeakEntries = { count: interval.totalEntries, time: interval.interval };
+        if (interval.totalEntries > peaks.totalEntries) {
+          peaks.totalEntries = interval.totalEntries;
         }
-        if (interval.totalExits > peaks.totalPeakExits.count) {
-          peaks.totalPeakExits = { count: interval.totalExits, time: interval.interval };
+        if (interval.totalExits > peaks.totalExits) {
+          peaks.totalExits = interval.totalExits;
         }
-        // Update male peaks
-        if (interval.maleEntries > peaks.malePeakEntries.count) {
-          peaks.malePeakEntries = { count: interval.maleEntries, time: interval.interval };
+        if (interval.maleEntries > peaks.maleEntries) {
+          peaks.maleEntries = interval.maleEntries;
         }
-        if (interval.maleExits > peaks.malePeakExits.count) {
-          peaks.malePeakExits = { count: interval.maleExits, time: interval.interval };
+        if (interval.femaleEntries > peaks.femaleEntries) {
+          peaks.femaleEntries = interval.femaleEntries;
         }
-        // Update female peaks
-        if (interval.femaleEntries > peaks.femalePeakEntries.count) {
-          peaks.femalePeakEntries = { count: interval.femaleEntries, time: interval.interval };
+        if (interval.maleExits > peaks.maleExits) {
+          peaks.maleExits = interval.maleExits;
         }
-        if (interval.femaleExits > peaks.femalePeakExits.count) {
-          peaks.femalePeakExits = { count: interval.femaleExits, time: interval.interval };
+        if (interval.femaleExits > peaks.femaleExits) {
+          peaks.femaleExits = interval.femaleExits;
         }
         return peaks;
       }, {
-        totalPeakEntries: { count: 0, time: '-' },
-        totalPeakExits: { count: 0, time: '-' },
-        malePeakEntries: { count: 0, time: '-' },
-        malePeakExits: { count: 0, time: '-' },
-        femalePeakEntries: { count: 0, time: '-' },
-        femalePeakExits: { count: 0, time: '-' },
-        sessionId: activeSessionId
+        totalEntries: 0,
+        totalExits: 0,
+        maleEntries: 0,
+        femaleEntries: 0,
+        maleExits: 0,
+        femaleExits: 0,
+        peakEntryInterval: '',
+        peakExitInterval: '',
+        maxTraffic: 0,
       });
 
-      // Update state with processed data
-      setPeakStats(peaks);
       setIntervalStats(statsArray);
 
     } catch (err: any) {
@@ -311,7 +226,6 @@ export default function AdminDashboard() {
     }
   };
 
-  // Fetch interval stats whenever selected date changes
   useEffect(() => {
     fetchIntervalStats();
   }, [selectedDate]);
@@ -332,12 +246,85 @@ export default function AdminDashboard() {
     return 'text-white';
   };
 
+  // Calculate peak traffic statistics
+  const peakStats = useMemo(() => {
+    if (!entries || entries.length === 0) return null;
+
+    // Filter entries for the selected date only
+    const dateFilteredEntries = entries.filter(entry => entry.date === selectedDate);
+    if (dateFilteredEntries.length === 0) return null;
+
+    // Calculate total entries and exits for the selected date
+    const totalEntries = dateFilteredEntries.filter(e => e.type === 'entry').length;
+    const totalExits = dateFilteredEntries.filter(e => e.type === 'exit').length;
+
+    // Calculate gender-specific counts for the selected date
+    const maleEntries = dateFilteredEntries.filter(e => e.type === 'entry' && e.gender === 'male').length;
+    const femaleEntries = dateFilteredEntries.filter(e => e.type === 'entry' && e.gender === 'female').length;
+    const maleExits = dateFilteredEntries.filter(e => e.type === 'exit' && e.gender === 'male').length;
+    const femaleExits = dateFilteredEntries.filter(e => e.type === 'exit' && e.gender === 'female').length;
+
+    // Find the interval with the highest traffic
+    let maxTraffic = 0;
+    let peakEntryInterval = '';
+    let peakExitInterval = '';
+
+    // Process each interval for the selected date
+    intervalStats.forEach((stats) => {
+      // Track peak entry times
+      if (stats.totalEntries > maxTraffic) {
+        maxTraffic = stats.totalEntries;
+        peakEntryInterval = stats.interval;
+      }
+      
+      // Track peak exit times
+      if (stats.totalExits > maxTraffic) {
+        maxTraffic = stats.totalExits;
+        peakExitInterval = stats.interval;
+      }
+    });
+
+    return {
+      totalEntries,
+      totalExits,
+      maleEntries,
+      femaleEntries,
+      maleExits,
+      femaleExits,
+      peakEntryInterval,
+      peakExitInterval,
+      maxTraffic
+    };
+  }, [entries, intervalStats, selectedDate]);
+
   return (
     <div className="min-h-screen bg-gray-900 text-white p-2 sm:p-4 md:p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
         {/* Header Section with Date Selector */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 sm:mb-6">
-          <h1 className="text-xl sm:text-2xl md:text-3xl font-bold mb-2 sm:mb-0">Admin Dashboard</h1>
+          <div className="flex items-center gap-10 mb-2 sm:mb-0">
+            <a
+              href="/"
+              className="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-all duration-200 flex items-center gap-2 text-sm"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="text-white/70"
+              >
+                <path d="M19 12H5M12 19l-7-7 7-7" />
+              </svg>
+              <span className="text-white/70">Back</span>
+            </a>
+            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold">Admin Dashboard</h1>
+          </div>
           <div className="w-full sm:w-auto">
             <input
               type="date"
@@ -348,36 +335,12 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* Session Information Display */}
-        <div className="mb-4 sm:mb-6 p-3 sm:p-4 bg-gray-800 rounded-lg">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1 sm:gap-2 text-sm sm:text-base">
-            <div>
-              <span className="text-gray-400">Session Started: </span>
-              <span className="font-medium">
-                {sessionStartTime 
-                  ? new Date(sessionStartTime).toLocaleTimeString('en-US', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      timeZone: 'America/Toronto'
-                    })
-                  : '-'}
-              </span>
-            </div>
-            <div>
-              <span className="text-gray-400">ID: </span>
-              <span className="font-mono text-xs sm:text-sm">{currentSessionId || '-'}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Error Message Display */}
         {error && (
           <div className="mb-4 sm:mb-6 p-3 sm:p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-200 text-sm sm:text-base">
             {error}
           </div>
         )}
 
-        {/* Loading State or Main Content */}
         {isLoading ? (
           <div className="flex justify-center items-center min-h-[200px]">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
@@ -390,21 +353,24 @@ export default function AdminDashboard() {
               <div className="backdrop-blur-sm bg-white/5 p-3 rounded-xl border border-white/10">
                 <h3 className="text-sm font-semibold mb-1 text-gray-400">Currently Inside</h3>
                 <p className="text-2xl sm:text-3xl font-bold text-white">
-                  {intervalStats.length > 0 ? intervalStats[intervalStats.length - 1].runningTotal : 0}
+                  {entries.reduce((total, entry) => {
+                    if (entry.type === 'entry') return total + 1;
+                    return Math.max(0, total - 1);
+                  }, 0)}
                 </p>
               </div>
               {/* Total Entries Card */}
               <div className="backdrop-blur-sm bg-white/5 p-3 rounded-xl border border-white/10">
                 <h3 className="text-sm font-semibold mb-1 text-gray-400">Total Entries</h3>
                 <p className="text-2xl sm:text-3xl font-bold text-green-400">
-                  {intervalStats.reduce((acc, curr) => acc + curr.totalEntries, 0)}
+                  {entries.filter(entry => entry.type === 'entry').length}
                 </p>
               </div>
               {/* Total Exits Card */}
               <div className="backdrop-blur-sm bg-white/5 p-3 rounded-xl border border-white/10">
                 <h3 className="text-sm font-semibold mb-1 text-gray-400">Total Exits</h3>
                 <p className="text-2xl sm:text-3xl font-bold text-red-400">
-                  {intervalStats.reduce((acc, curr) => acc + curr.totalExits, 0)}
+                  {entries.filter(entry => entry.type === 'exit').length}
                 </p>
               </div>
             </div>
@@ -618,35 +584,31 @@ export default function AdminDashboard() {
                       <tr>
                         <th className="px-3 py-2">Category</th>
                         <th className="px-3 py-2">Peak Entries</th>
-                        <th className="px-3 py-2">Time</th>
+                        <th className="px-3 py-2">Peak Time</th>
                         <th className="px-3 py-2">Peak Exits</th>
-                        <th className="px-3 py-2">Time</th>
                       </tr>
                     </thead>
                     <tbody className="text-gray-300">
                       {/* Total Traffic Row */}
                       <tr className="border-t border-white/10">
                         <td className="px-3 py-2 font-medium">Total</td>
-                        <td className="px-3 py-2 text-green-400">{peakStats.totalPeakEntries.count}</td>
-                        <td className="px-3 py-2">{peakStats.totalPeakEntries.time}</td>
-                        <td className="px-3 py-2 text-red-400">{peakStats.totalPeakExits.count}</td>
-                        <td className="px-3 py-2">{peakStats.totalPeakExits.time}</td>
+                        <td className="px-3 py-2 text-green-400">{peakStats?.totalEntries || 0}</td>
+                        <td className="px-3 py-2">{peakStats?.peakEntryInterval || '-'}</td>
+                        <td className="px-3 py-2 text-red-400">{peakStats?.totalExits || 0}</td>
                       </tr>
                       {/* Male Traffic Row */}
                       <tr className="border-t border-white/10">
                         <td className="px-3 py-2 font-medium">Male</td>
-                        <td className="px-3 py-2 text-blue-400">{peakStats.malePeakEntries.count}</td>
-                        <td className="px-3 py-2">{peakStats.malePeakEntries.time}</td>
-                        <td className="px-3 py-2 text-red-400">{peakStats.malePeakExits.count}</td>
-                        <td className="px-3 py-2">{peakStats.malePeakExits.time}</td>
+                        <td className="px-3 py-2 text-blue-400">{peakStats?.maleEntries || 0}</td>
+                        <td className="px-3 py-2">{peakStats?.peakEntryInterval || '-'}</td>
+                        <td className="px-3 py-2 text-red-400">{peakStats?.maleExits || 0}</td>
                       </tr>
                       {/* Female Traffic Row */}
                       <tr className="border-t border-white/10">
                         <td className="px-3 py-2 font-medium">Female</td>
-                        <td className="px-3 py-2 text-pink-400">{peakStats.femalePeakEntries.count}</td>
-                        <td className="px-3 py-2">{peakStats.femalePeakEntries.time}</td>
-                        <td className="px-3 py-2 text-red-400">{peakStats.femalePeakExits.count}</td>
-                        <td className="px-3 py-2">{peakStats.femalePeakExits.time}</td>
+                        <td className="px-3 py-2 text-pink-400">{peakStats?.femaleEntries || 0}</td>
+                        <td className="px-3 py-2">{peakStats?.peakEntryInterval || '-'}</td>
+                        <td className="px-3 py-2 text-red-400">{peakStats?.femaleExits || 0}</td>
                       </tr>
                     </tbody>
                   </table>
