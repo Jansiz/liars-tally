@@ -48,14 +48,34 @@ export default function EntryLogger() {
   // Get current date in Toronto timezone
   const getTodayInToronto = () => {
     const now = new Date();
-    const torontoTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Toronto' }));
+    // Format the date directly to YYYY-MM-DD in Toronto timezone
+    const torontoDate = now.toLocaleDateString('en-CA', { 
+      timeZone: 'America/Toronto',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+    
+    // Get hours in Toronto time for the 4 AM check
+    const torontoHours = now.toLocaleString('en-US', { 
+      timeZone: 'America/Toronto',
+      hour: 'numeric',
+      hour12: false 
+    });
     
     // If it's between midnight and 3 AM Toronto time, show the previous day
-    if (torontoTime.getHours() < 3) {
-      torontoTime.setDate(torontoTime.getDate() - 1);
+    if (parseInt(torontoHours) < 4) {
+      const prevDay = new Date(now);
+      prevDay.setDate(prevDay.getDate() - 1);
+      return prevDay.toLocaleDateString('en-CA', {
+        timeZone: 'America/Toronto',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      });
     }
     
-    return torontoTime.toISOString().split('T')[0];
+    return torontoDate;
   };
 
   // Check database connection on component mount
@@ -147,13 +167,13 @@ export default function EntryLogger() {
         }
       });
 
-    // Check for date change every minute
+    // Check for date change every 30 seconds
     const dateCheckInterval = setInterval(() => {
       const currentDate = getTodayInToronto();
       if (currentDate !== getTodayInToronto()) {
         fetchCurrentCounts();
       }
-    }, 60000); // Check every minute
+    }, 30000); // Check every 30 seconds
 
     // Cleanup subscription on component unmount
     return () => {
@@ -168,17 +188,33 @@ export default function EntryLogger() {
       setIsLoading(true);
       setErrorMessage(null);
 
-      // Get current time in Toronto timezone
       const now = new Date();
-      const torontoTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Toronto' }));
       
-      // Calculate the correct date based on the 4 AM to 3 AM window
-      let entryDate = new Date(torontoTime);
-      const currentHour = torontoTime.getHours();
+      // Get the date and time in Toronto timezone
+      const torontoDate = now.toLocaleDateString('en-CA', {
+        timeZone: 'America/Toronto',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      });
       
-      // If it's between midnight and 3 AM, use the previous day's date
-      if (currentHour < 4) {
-        entryDate.setDate(entryDate.getDate() - 1);
+      const torontoHours = parseInt(now.toLocaleString('en-US', {
+        timeZone: 'America/Toronto',
+        hour: 'numeric',
+        hour12: false
+      }));
+
+      // If it's between midnight and 3 AM, use previous day's date
+      let entryDate = torontoDate;
+      if (torontoHours < 4) {
+        const prevDay = new Date(now);
+        prevDay.setDate(prevDay.getDate() - 1);
+        entryDate = prevDay.toLocaleDateString('en-CA', {
+          timeZone: 'America/Toronto',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit'
+        });
       }
 
       const { error } = await supabase
@@ -187,8 +223,8 @@ export default function EntryLogger() {
           {
             gender,
             type,
-            timestamp: torontoTime.toISOString(),
-            date: entryDate.toISOString().split('T')[0]
+            timestamp: now.toISOString(), // Keep timestamp in UTC
+            date: entryDate // Use the Toronto date
           }
         ]);
 
