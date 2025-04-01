@@ -153,9 +153,12 @@ export default function EntryLogger() {
           table: 'entries',
           filter: `date=eq.${getTodayInToronto()}`
         },
-        async () => {
-          // Refetch counts whenever there's a change in entries
-          await fetchCurrentCounts();
+        async (payload: RealtimePostgresChangesPayload<Entry>) => {
+          // Only update if the change is for today's date
+          if (payload.new && 'date' in payload.new && payload.new.date === getTodayInToronto()) {
+            // Refetch counts whenever there's a change in entries
+            await fetchCurrentCounts();
+          }
         }
       )
       .subscribe((status: 'SUBSCRIBED' | 'CHANNEL_ERROR') => {
@@ -229,12 +232,6 @@ export default function EntryLogger() {
         ]);
 
       if (error) throw error;
-
-      // Update UI state
-      setCurrentCount(prev => ({
-        ...prev,
-        [gender]: type === 'entry' ? prev[gender] + 1 : Math.max(0, prev[gender] - 1)
-      }));
 
     } catch (error: any) {
       console.error('Error logging entry:', error);
